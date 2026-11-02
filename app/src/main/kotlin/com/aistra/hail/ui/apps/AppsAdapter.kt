@@ -24,7 +24,17 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
             ): Boolean = oldItem.packageName == newItem.packageName
 
             override fun areContentsTheSame(oldItem: ApplicationInfo, newItem: ApplicationInfo): Boolean =
-                oldItem.flags and ApplicationInfo.FLAG_INSTALLED == newItem.flags and ApplicationInfo.FLAG_INSTALLED
+                oldItem.flags == newItem.flags &&
+                    oldItem.enabled == newItem.enabled &&
+                    oldItem.uid == newItem.uid &&
+                    oldItem.sourceDir == newItem.sourceDir &&
+                    privateFlags(oldItem) == privateFlags(newItem)
+
+            private fun privateFlags(info: ApplicationInfo): Int = runCatching {
+                ApplicationInfo::class.java.getDeclaredField("privateFlags").apply {
+                    isAccessible = true
+                }.getInt(info)
+            }.getOrDefault(0)
         }
     }
 

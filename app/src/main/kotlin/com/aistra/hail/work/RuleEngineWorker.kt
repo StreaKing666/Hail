@@ -34,7 +34,6 @@ internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
             store.appendAudit("Rule evaluation failed: " + (it.message ?: it.javaClass.simpleName))
             return Result.failure()
         }
-        store.saveExecutionState(evaluation.nextState)
 
         var failed = false
         evaluation.decisions.filter { it.status.name == "READY" }.forEach { decision ->
@@ -49,11 +48,23 @@ internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
             )
             if (summary.incomplete) failed = true
         }
-        return if (failed) Result.failure() else Result.success()
+
+        if (failed) {
+            if (runAttemptCount < MAX_ATTEMPTS) return Result.retry()
+            store.appendAudit("Event " + eventId + " stopped after " + MAX_ATTEMPTS + " attempts")
+            store.saveExecutionState(evaluation.nextState)
+            return Result.failure()
+        }
+
+        // Commit idempotency only after the requested package states have been verified.
+        // Replaying a partial batch is safe: the controller verifies already-applied states.
+        store.saveExecutionState(evaluation.nextState)
+        return Result.success()
     }
 
     companion object {
         const val KEY_TRIGGER = "trigger"
         const val KEY_EVENT_ID = "event_id"
+        private const val MAX_ATTEMPTS = 5
     }
 }

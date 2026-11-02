@@ -67,6 +67,25 @@ class FullBackupArchiveTest {
     }
 
     @Test
+    fun automationDefinitionsAreExportableButDeviceModeRemainsProtected() {
+        val bytes = FullBackupArchive.encode(
+            files = files,
+            preferences = mapOf(
+                "rule_engine_enabled" to true,
+                "active_profile_id" to "profile-123",
+                "working_mode" to "su_disable"
+            ),
+            applicationId = "com.aistra.hail.enhanced",
+            versionName = "test",
+            versionCode = 1
+        )
+        val payload = FullBackupArchive.decode(bytes.inputStream())
+        assertEquals(true, payload.preferences["rule_engine_enabled"])
+        assertEquals("profile-123", payload.preferences["active_profile_id"])
+        assertFalse(payload.preferences.containsKey("working_mode"))
+    }
+
+    @Test
     fun missingTrackedAppFilesAreRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             FullBackupArchive.encode(

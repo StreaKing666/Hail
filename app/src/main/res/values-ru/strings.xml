@@ -272,4 +272,7 @@
     <string name="rule_trigger_not_charging">При отключении зарядки</string>
     <string name="rule_action_freeze">Заморозить отслеживаемые приложения</string>
     <string name="rule_action_unfreeze">Разморозить отслеживаемые приложения</string>
+
+    <string name="freeze_operation_log">Журнал заморозки</string>
+    <string name="freeze_operation_log_empty">Операции заморозки ещё не записывались.</string>
 </resources>

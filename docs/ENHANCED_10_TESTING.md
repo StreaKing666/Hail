@@ -26,10 +26,10 @@ Release compilation without configured permanent signing is only a compilation c
 ## Remaining modernization gaps
 
 - Freeze backends, permission handling, hidden-app discovery and recovery after process termination need real-device validation. Discovery currently covers the current Android user only.
-- The existing controller facade creates a fresh controller for each call; instance locks do not provide a global lock across concurrent operations.
-- Profiles are created from all tracked apps with a frozen target state. Editing individual package assignments, unfreeze states and profile names is not exposed in the UI.
-- Rules use all tracked apps and a fixed 30-second cooldown. SCREEN_OFF depends on AutoFreezeService. Per-package/cooldown editing and an audit viewer are absent.
-- Deleting a profile does not clean up its existing launcher shortcuts.
+- The controller facade now serializes operations globally and reconciles pending journal entries with their original backend without replaying privileged commands.
+- Profiles snapshot the current frozen/unfrozen state of tracked apps. Editing individual package assignments and profile names is not yet exposed in the UI.
+- Rules use all tracked apps and a fixed 30-second cooldown. SCREEN_OFF depends on AutoFreezeService. Per-package/cooldown editing is absent; a bounded operation audit viewer is available in Settings. Repeated events are coalesced, and partially completed operations are retried idempotently.
+- Deleting a profile does not yet clean up its existing launcher shortcuts.
 - Navigation, rotation, fonts, multiple columns and launcher shortcuts still require visual/device checks.
 
 These limitations are present in the modernization branch and are not completion claims for the seven-area roadmap.

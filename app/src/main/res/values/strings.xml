@@ -266,4 +266,7 @@
     <string name="rule_trigger_not_charging">When charging stops</string>
     <string name="rule_action_freeze">Freeze tracked applications</string>
     <string name="rule_action_unfreeze">Unfreeze tracked applications</string>
+
+    <string name="freeze_operation_log">Recent freeze operations</string>
+    <string name="freeze_operation_log_empty">No freeze operations have been recorded yet.</string>
 </resources>

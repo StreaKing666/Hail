@@ -43,6 +43,7 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.app.FreezeProfileManager
 import com.aistra.hail.app.FreezeProfileStore
 import com.aistra.hail.app.FreezeRuleStore
+import com.aistra.hail.app.FreezeControllerFacade
 import com.aistra.hail.enhanced.domain.FreezeProfile
 import com.aistra.hail.enhanced.domain.FreezeRule
 import com.aistra.hail.enhanced.domain.RuleAction
@@ -310,6 +311,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 icon = { Icon(imageVector = Icons.Outlined.Folder, contentDescription = null) },
                 onClick = ::showProfilesDialog
             )
+            preference(
+                key = "freeze_operation_log",
+                title = { Text(text = stringResource(R.string.freeze_operation_log)) },
+                icon = { Icon(imageVector = Icons.Outlined.History, contentDescription = null) },
+                onClick = ::showFreezeOperationLog
+            )
             horizontalDivider()
             preferenceCategory(
                 key = "enhanced_automation",
@@ -494,6 +501,44 @@ class SettingsFragment : MainFragment(), MenuProvider {
                     )
                 }
             }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun showFreezeOperationLog() {
+        val entries = FreezeControllerFacade.recentOperations(50)
+        if (entries.isEmpty()) {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.freeze_operation_log)
+                .setMessage(R.string.freeze_operation_log_empty)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+        val rows = entries.map { entry ->
+            val time = java.text.DateFormat.getDateTimeInstance()
+                .format(java.util.Date(entry.createdAtEpochMs))
+            time + " · " + entry.packageName + " · " + entry.action.name + " · " + entry.state.name
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.freeze_operation_log)
+            .setItems(rows) { _, index ->
+                val entry = entries[index]
+                val detail = buildString {
+                    append(entry.backendId)
+                    append("\n")
+                    append(entry.state.name)
+                    entry.reason?.let {
+                        append("\n\n")
+                        append(it)
+                    }
+                }
+                MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(entry.packageName)
+                    .setMessage(detail)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+            }
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun showProfilesDialog() {

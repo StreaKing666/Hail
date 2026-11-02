@@ -163,6 +163,9 @@ internal object FullBackupStorage {
                 editor.putString(HailData.WORKING_MODE, HailData.MODE_DEFAULT)
                 editor.putBoolean(HailData.BIOMETRIC_LOGIN, false)
                 editor.putBoolean(HailData.AUTO_FREEZE_AFTER_LOCK, false)
+                // Keep definitions portable, but never reactivate automation/profile state on import.
+                editor.putBoolean(HailData.RULE_ENGINE_ENABLED, false)
+                editor.remove(HailData.ACTIVE_PROFILE_ID)
             }
             check(editor.commit()) { "Could not save restored preferences" }
 
@@ -193,7 +196,9 @@ internal object FullBackupStorage {
         val affectedKeys = restoredKeys + setOf(
             HailData.WORKING_MODE,
             HailData.BIOMETRIC_LOGIN,
-            HailData.AUTO_FREEZE_AFTER_LOCK
+            HailData.AUTO_FREEZE_AFTER_LOCK,
+            HailData.RULE_ENGINE_ENABLED,
+            HailData.ACTIVE_PROFILE_ID
         )
         affectedKeys.forEach { key ->
             val value = previous[key]

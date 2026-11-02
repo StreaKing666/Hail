@@ -30,7 +30,7 @@ internal object FreezeProfileManager {
         return FreezeProfile(
             id = UUID.randomUUID().toString(),
             name = name.trim(),
-            packageStates = packages.associateWith { true },
+            packageStates = packages.associateWith { AppManager.isAppFrozen(it) },
             createdAtEpochMs = now,
             updatedAtEpochMs = now
         ).also { FreezeProfileStore(context).save(it) }

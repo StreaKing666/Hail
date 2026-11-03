@@ -21,6 +21,17 @@ class FreezeControllerTest {
         }
     }
 
+    @Test fun separateControllersKeepBothJournalEntriesAtTheSameTimestamp() {
+        val backend = FakeBackend()
+        val journal = InMemoryFreezeOperationJournal()
+        FreezeController(listOf(backend), journal, { 10L })
+            .execute(listOf("com.example.app"), FreezeAction.FREEZE, "fake", 0)
+        FreezeController(listOf(backend), journal, { 10L })
+            .execute(listOf("com.example.app"), FreezeAction.UNFREEZE, "fake", 0)
+        assertEquals(2, journal.recent().size)
+        assertEquals(2, journal.recent().map { it.id }.toSet().size)
+    }
+
     @Test fun verifiesStateAfterCommand() {
         val backend = FakeBackend()
         val controller = FreezeController(listOf(backend), InMemoryFreezeOperationJournal(), { 10L })

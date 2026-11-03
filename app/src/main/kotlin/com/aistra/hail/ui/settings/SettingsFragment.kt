@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.*
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.text.InputType
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.ArrayRes
 import androidx.annotation.StringRes
@@ -44,6 +46,7 @@ import com.aistra.hail.app.FreezeProfileManager
 import com.aistra.hail.app.FreezeProfileStore
 import com.aistra.hail.app.FreezeRuleStore
 import com.aistra.hail.app.FreezeControllerFacade
+import com.aistra.hail.enhanced.domain.EnhancedEditors
 import com.aistra.hail.enhanced.domain.FreezeProfile
 import com.aistra.hail.enhanced.domain.FreezeRule
 import com.aistra.hail.enhanced.domain.RuleAction
@@ -542,7 +545,10 @@ class SettingsFragment : MainFragment(), MenuProvider {
     }
 
     private fun showProfilesDialog() {
-        val profiles = FreezeProfileStore(requireContext()).getAll()
+        val profiles = runCatching { FreezeProfileStore(requireContext()).getAll() }.getOrElse {
+            HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
+            return
+        }
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.profile_manage)
             .setItems(profiles.map { it.name }.toTypedArray()) { _, index ->
@@ -580,12 +586,14 @@ class SettingsFragment : MainFragment(), MenuProvider {
             getString(R.string.profile_apply),
             getString(R.string.profile_shortcut),
             getString(R.string.profile_pin_shortcut),
-            getString(R.string.profile_delete)
+            getString(R.string.profile_delete),
+            getString(R.string.enhanced_edit)
         )
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(profile.name)
             .setItems(actions) { _, which ->
                 when (which) {
+                    4 -> editProfile(profile)
                     0 -> applyProfile(profile, false)
                     1 -> {
                         HShortcuts.addProfileShortcut(profile)
@@ -596,8 +604,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
                         .setTitle(R.string.profile_delete)
                         .setMessage(profile.name)
                         .setPositiveButton(android.R.string.ok) { _, _ ->
-                            FreezeProfileManager.delete(requireContext(), profile.id)
-                            HUI.showToast(R.string.profile_deleted)
+                            runCatching { FreezeProfileManager.delete(requireContext(), profile.id) }
+                                .onSuccess { HUI.showToast(R.string.profile_deleted) }
+                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
                         }
                         .setNegativeButton(android.R.string.cancel, null)
                         .show()
@@ -632,7 +641,10 @@ class SettingsFragment : MainFragment(), MenuProvider {
 
     private fun showRulesDialog() {
         val store = FreezeRuleStore(requireContext())
-        val rules = store.getRules()
+        val rules = runCatching { store.getRules() }.getOrElse {
+            HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
+            return
+        }
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.rule_manage)
             .setItems(rules.map { it.name + if (it.enabled) " ✓" else " (off)" }.toTypedArray()) { _, index ->
@@ -694,7 +706,6 @@ class SettingsFragment : MainFragment(), MenuProvider {
         val actionName = if (action == RuleAction.FREEZE) {
             getString(R.string.rule_action_freeze)
         } else getString(R.string.rule_action_unfreeze)
-        val store = FreezeRuleStore(requireContext())
         val rule = FreezeRule(
             id = UUID.randomUUID().toString(),
             name = triggerName + " — " + actionName,
@@ -704,28 +715,30 @@ class SettingsFragment : MainFragment(), MenuProvider {
             packageNames = packages,
             cooldownMillis = 30_000L
         )
-        runCatching { store.saveRules(store.getRules() + rule) }
-            .onSuccess { HUI.showToast(R.string.rule_created) }
-            .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
+        editRule(rule, isNew = true)
     }
 
     private fun showRuleActions(rule: FreezeRule) {
         val store = FreezeRuleStore(requireContext())
-        val actions = arrayOf(getString(R.string.rule_toggle), getString(R.string.rule_delete))
+        val actions = arrayOf(getString(R.string.rule_toggle), getString(R.string.rule_delete), getString(R.string.enhanced_edit))
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(rule.name)
             .setItems(actions) { _, which ->
                 when (which) {
+                    2 -> editRule(rule)
                     0 -> {
-                        store.saveRules(store.getRules().map {
-                            if (it.id == rule.id) it.copy(enabled = !it.enabled) else it
-                        })
+                        runCatching {
+                            store.saveRules(store.getRules().map {
+                                if (it.id == rule.id) it.copy(enabled = !it.enabled) else it
+                            })
+                        }.onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
                     }
                     1 -> MaterialAlertDialogBuilder(requireContext())
                         .setTitle(R.string.rule_delete)
                         .setPositiveButton(android.R.string.ok) { _, _ ->
-                            store.saveRules(store.getRules().filterNot { it.id == rule.id })
-                            HUI.showToast(R.string.rule_deleted)
+                            runCatching { store.saveRules(store.getRules().filterNot { it.id == rule.id }) }
+                                .onSuccess { HUI.showToast(R.string.rule_deleted) }
+                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
                         }
                         .setNegativeButton(android.R.string.cancel, null)
                         .show()
@@ -733,6 +746,80 @@ class SettingsFragment : MainFragment(), MenuProvider {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun choosePackages(existing: Set<String>, onSave: (Set<String>) -> Unit) {
+        val packages = (existing + HailData.checkedList.map { it.packageName })
+            .filter { it != app.packageName }.sorted()
+        val selected = existing.toMutableSet()
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.enhanced_choose_apps)
+            .setMultiChoiceItems(packages.toTypedArray(), BooleanArray(packages.size) {
+                packages[it] in selected
+            }) { _, index, checked ->
+                if (checked) selected.add(packages[index]) else selected.remove(packages[index])
+            }
+            .setPositiveButton(android.R.string.ok) { _, _ -> onSave(selected.toSet()) }
+            .setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun editProfile(profile: FreezeProfile) {
+        val name = EditText(requireContext()).apply { setSingleLine(); setText(profile.name) }
+        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.profile_name).setView(name)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val draftName = name.text.toString()
+                choosePackages(profile.packageStates.keys) { packages ->
+                    val ordered = packages.sorted()
+                    val frozen = packages.filterTo(mutableSetOf()) { profile.packageStates[it] == true }
+                    MaterialAlertDialogBuilder(requireContext())
+                        .setTitle(R.string.enhanced_frozen_apps)
+                        .setMultiChoiceItems(ordered.toTypedArray(), BooleanArray(ordered.size) {
+                            ordered[it] in frozen
+                        }) { _, index, checked ->
+                            if (checked) frozen.add(ordered[index]) else frozen.remove(ordered[index])
+                        }
+                        .setPositiveButton(R.string.action_save) { _, _ ->
+                            runCatching {
+                                val edited = EnhancedEditors.profile(profile, draftName,
+                                    ordered.associateWith { it in frozen }, System.currentTimeMillis(), app.packageName)
+                                FreezeProfileStore(requireContext()).save(edited)
+                            }.onSuccess { HUI.showToast(R.string.action_save) }
+                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
+                        }
+                        .setNegativeButton(android.R.string.cancel, null).show()
+                }
+            }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun editRule(rule: FreezeRule, isNew: Boolean = false) {
+        val name = EditText(requireContext()).apply {
+            setSingleLine(); hint = getString(R.string.profile_name); setText(rule.name)
+        }
+        val cooldown = EditText(requireContext()).apply {
+            setSingleLine(); inputType = InputType.TYPE_CLASS_NUMBER
+            hint = getString(R.string.enhanced_cooldown_seconds)
+            setText((rule.cooldownMillis / 1000).toString())
+        }
+        val form = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(name); addView(MaterialTextView(context).apply { setText(R.string.enhanced_cooldown_seconds) })
+            addView(cooldown)
+        }
+        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.enhanced_edit).setView(form)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val draftName = name.text.toString()
+                val draftCooldown = cooldown.text.toString()
+                choosePackages(rule.packageNames) { packages ->
+                    runCatching {
+                        val edited = EnhancedEditors.rule(rule, draftName, packages, draftCooldown, app.packageName)
+                        val store = FreezeRuleStore(requireContext())
+                        val current = store.getRules()
+                        check(isNew || current.any { it.id == rule.id }) { "Rule was deleted" }
+                        store.saveRules(current.filterNot { it.id == rule.id } + edited)
+                    }.onSuccess { HUI.showToast(R.string.action_save) }
+                        .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
+                }
+            }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
     fun onWorkingModeChange(rememberState: MutableState<String>, mode: String): Boolean {

@@ -275,4 +275,8 @@
 
     <string name="freeze_operation_log">Журнал заморозки</string>
     <string name="freeze_operation_log_empty">Операции заморозки ещё не записывались.</string>
+    <string name="enhanced_edit">Редактировать</string>
+    <string name="enhanced_choose_apps">Выберите приложения</string>
+    <string name="enhanced_frozen_apps">Заморозить отмеченные, разморозить остальные</string>
+    <string name="enhanced_cooldown_seconds">Минимальный интервал, секунды (0–86400)</string>
 </resources>

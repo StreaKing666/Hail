@@ -1,0 +1,51 @@
+name: Hail Enhanced audit build
+on:
+  push:
+    branches: [enhanced/audit-2026-11-03]
+permissions:
+  contents: read
+concurrency:
+  group: hail-audit-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Python regressions
+        run: python3 -m unittest tools/test_legacy_export_hail_backup.py
+      - name: JVM regressions and APK compilation
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease
+      - name: Android lint
+        run: ./gradlew --no-daemon :app:lintDebug
+      - name: Record exact build identity
+        if: always()
+        run: |
+          mkdir -p audit-output
+          git rev-parse HEAD > audit-output/SOURCE_SHA.txt
+          cp app/build/outputs/apk/debug/*.apk audit-output/ 2>/dev/null || true
+          cp app/build/outputs/apk/release/*.apk audit-output/ 2>/dev/null || true
+          find audit-output -name '*.apk' -exec sha256sum {} + > audit-output/SHA256SUMS.txt
+          for apk in audit-output/*.apk; do
+            test -f "$apk" || continue
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" >> audit-output/APK_METADATA.txt
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Hail-Enhanced-audit-${{ github.sha }}
+          path: |
+            audit-output/
+            app/build/reports/
+            app/build/test-results/
+          retention-days: 14
+          if-no-files-found: error

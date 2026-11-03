@@ -8,6 +8,7 @@ import com.aistra.hail.enhanced.domain.FreezeOperationResult
 import com.aistra.hail.enhanced.domain.FreezeProfile
 import com.aistra.hail.enhanced.domain.FreezeProfileEngine
 import java.util.UUID
+import com.aistra.hail.utils.HShortcuts
 
 internal data class FreezeProfileApplyResult(
     val profile: FreezeProfile,
@@ -72,6 +73,7 @@ internal object FreezeProfileManager {
     }
 
     fun delete(context: Context, profileId: String) {
+        HShortcuts.removeProfileShortcuts(profileId)
         FreezeProfileStore(context).delete(profileId)
         val preferences = PreferenceManager.getDefaultSharedPreferences(context)
         if (preferences.getString(ACTIVE_PROFILE, null) == profileId) {

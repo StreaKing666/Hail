@@ -1,5 +1,6 @@
 package com.aistra.hail.app
 
+import com.aistra.hail.utils.AtomicFileStorage
 import android.content.Context
 import androidx.preference.PreferenceManager
 import com.aistra.hail.enhanced.domain.FreezeRule
@@ -10,8 +11,6 @@ import com.aistra.hail.enhanced.domain.RuleTrigger
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
 
 internal class FreezeRuleStore(context: Context) {
     private val applicationContext = context.applicationContext
@@ -24,9 +23,8 @@ internal class FreezeRuleStore(context: Context) {
             check(defaultPreferences.edit().putBoolean(HailData.RULE_ENGINE_ENABLED, value).commit())
         }
 
-    @Synchronized
-    fun getRules(): List<FreezeRule> = runCatching {
-        val json = readDocument().optJSONArray("rules") ?: JSONArray()
+    fun getRules(): List<FreezeRule> = synchronized(STORAGE_LOCK) {
+        val json = readDocument().let { if (it.has("rules")) it.getJSONArray("rules") else JSONArray() }
         val rules = List(json.length()) { index ->
             val item = json.getJSONObject(index)
             val packages = item.getJSONArray("packages")
@@ -43,10 +41,9 @@ internal class FreezeRuleStore(context: Context) {
             )
         }
         RuleEngine.validate(rules)
-    }.getOrDefault(emptyList())
+    }
 
-    @Synchronized
-    fun saveRules(rules: List<FreezeRule>) {
+    fun saveRules(rules: List<FreezeRule>) = synchronized(STORAGE_LOCK) {
         RuleEngine.validate(rules)
         val json = JSONArray()
         rules.forEach { rule ->
@@ -65,8 +62,7 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(document)
     }
 
-    @Synchronized
-    fun getExecutionState(): RuleExecutionState = runCatching {
+    fun getExecutionState(): RuleExecutionState = synchronized(STORAGE_LOCK) {
         val json = readDocument().optJSONObject("executionState") ?: JSONObject()
         val timesJson = json.optJSONObject("lastRunAtByRule") ?: JSONObject()
         val times = linkedMapOf<String, Long>()
@@ -76,10 +72,9 @@ internal class FreezeRuleStore(context: Context) {
             for (index in 0 until processedJson.length()) add(processedJson.getString(index))
         }
         RuleExecutionState(times, processed)
-    }.getOrDefault(RuleExecutionState())
+    }
 
-    @Synchronized
-    fun saveExecutionState(state: RuleExecutionState) {
+    fun saveExecutionState(state: RuleExecutionState) = synchronized(STORAGE_LOCK) {
         val times = JSONObject()
         state.lastRunAtByRule.forEach { (id, time) -> times.put(id, time) }
         val processed = JSONArray()
@@ -91,8 +86,7 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(document)
     }
 
-    @Synchronized
-    fun appendAudit(message: String) {
+    fun appendAudit(message: String) = synchronized(STORAGE_LOCK) {
         val entries = readDocument().optJSONArray("audit") ?: JSONArray()
         val next = JSONArray()
         val old = List(entries.length()) { entries.getString(it) }
@@ -101,27 +95,15 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(readDocument().put("audit", next))
     }
 
-    private fun readDocument(): JSONObject = runCatching {
+    private fun readDocument(): JSONObject = synchronized(STORAGE_LOCK) {
         if (file.isFile) JSONObject(file.readText()) else JSONObject()
-    }.getOrDefault(JSONObject())
-
-    private fun writeDocument(document: JSONObject) {
-        val parent = file.parentFile ?: throw IOException("Rule storage has no parent")
-        if (!parent.exists() && !parent.mkdirs()) throw IOException("Could not create rule storage")
-        val temporary = File.createTempFile(".rules.", ".tmp", parent)
-        try {
-            FileOutputStream(temporary).use {
-                it.write(document.toString().toByteArray(Charsets.UTF_8))
-                it.fd.sync()
-            }
-            if (file.exists() && !file.delete()) throw IOException("Could not replace rule storage")
-            if (!temporary.renameTo(file)) throw IOException("Could not save rule storage")
-        } finally {
-            if (temporary.exists()) temporary.delete()
-        }
     }
 
+    private fun writeDocument(document: JSONObject) =
+        AtomicFileStorage.write(file, document.toString().toByteArray(Charsets.UTF_8))
+
     private companion object {
+        val STORAGE_LOCK = Any()
         const val MAX_AUDIT_ENTRIES = 100
     }
 }

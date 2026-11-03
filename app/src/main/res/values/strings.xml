@@ -269,4 +269,8 @@
 
     <string name="freeze_operation_log">Recent freeze operations</string>
     <string name="freeze_operation_log_empty">No freeze operations have been recorded yet.</string>
+    <string name="enhanced_edit">Edit</string>
+    <string name="enhanced_choose_apps">Choose applications</string>
+    <string name="enhanced_frozen_apps">Frozen applications (unchecked: unfrozen)</string>
+    <string name="enhanced_cooldown_seconds">Minimum interval, seconds (0–86400)</string>
 </resources>

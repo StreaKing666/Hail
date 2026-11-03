@@ -6,7 +6,7 @@ import com.aistra.hail.BuildConfig
 import com.aistra.hail.HailApp.Companion.app
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import com.aistra.hail.utils.AtomicFileStorage
 import java.io.IOException
 import java.security.MessageDigest
 
@@ -227,19 +227,5 @@ internal object FullBackupStorage {
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun writeAtomically(target: File, bytes: ByteArray) {
-        val parent = target.parentFile ?: throw IOException("Restore target has no parent directory")
-        if (!parent.exists() && !parent.mkdirs()) throw IOException("Could not create restore directory")
-        val temporary = File.createTempFile("." + target.name + ".", ".restore.tmp", parent)
-        try {
-            FileOutputStream(temporary).use { output ->
-                output.write(bytes)
-                output.fd.sync()
-            }
-            if (target.exists() && !target.delete()) throw IOException("Could not replace " + target.name)
-            if (!temporary.renameTo(target)) throw IOException("Could not write " + target.name)
-        } finally {
-            if (temporary.exists()) temporary.delete()
-        }
-    }
+    private fun writeAtomically(target: File, bytes: ByteArray) = AtomicFileStorage.write(target, bytes)
 }

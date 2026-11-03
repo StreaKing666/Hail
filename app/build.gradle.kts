@@ -43,8 +43,8 @@ android {
         applicationId = "com.aistra.hail.enhanced"
         minSdk = 23
         targetSdk = 36
-        versionCode = 111010
-        versionName = "1.11.0-enhanced.10"
+        versionCode = 111011
+        versionName = "1.11.0-enhanced.11"
     }
 
     buildTypes {
@@ -63,7 +63,7 @@ android {
                     keyAlias = releaseKeyAlias
                     keyPassword = releaseKeyPassword
                 }
-            } else signingConfigs.getByName("debug")
+            } else null
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )

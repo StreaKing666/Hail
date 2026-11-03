@@ -31,7 +31,7 @@ internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
                 protectedPackages = setOf(applicationContext.packageName)
             )
         }.getOrElse {
-            store.appendAudit("Rule evaluation failed: " + (it.message ?: it.javaClass.simpleName))
+            runCatching { store.appendAudit("Rule evaluation failed: " + (it.message ?: it.javaClass.simpleName)) }
             return Result.failure()
         }
 

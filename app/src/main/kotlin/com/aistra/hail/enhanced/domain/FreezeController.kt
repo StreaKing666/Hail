@@ -1,6 +1,6 @@
 package com.aistra.hail.enhanced.domain
 
-import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 internal enum class FreezeJournalState { PENDING, VERIFIED, FAILED, UNVERIFIED }
 
@@ -80,7 +80,6 @@ internal class FreezeController(
     private val now: () -> Long = System::currentTimeMillis
 ) {
     private val backendsById = backends.associateBy { it.id }
-    private val sequence = AtomicLong()
 
     @Synchronized
     fun execute(
@@ -153,7 +152,7 @@ internal class FreezeController(
             return result(packageName, action, backendId, userId, FreezeOutcome.SUCCESS, true, "Already in the requested state")
         }
 
-        val id = backendId + "-" + now() + "-" + sequence.incrementAndGet() + "-" + packageName.hashCode()
+        val id = UUID.randomUUID().toString()
         val pending = FreezeJournalEntry(
             id = id,
             packageName = packageName,

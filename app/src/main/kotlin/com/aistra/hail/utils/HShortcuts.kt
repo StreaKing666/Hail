@@ -13,6 +13,7 @@ import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
+import com.aistra.hail.enhanced.domain.ProfileShortcutIds
 import com.aistra.hail.enhanced.domain.FreezeProfile
 import me.zhanghai.android.appiconloader.AppIconLoader
 
@@ -98,7 +99,7 @@ object HShortcuts {
 
     internal fun addProfileShortcut(profile: FreezeProfile) {
         if (HailData.biometricLogin) return
-        val shortcut = ShortcutInfoCompat.Builder(app, "hail-profile-" + profile.id)
+        val shortcut = ShortcutInfoCompat.Builder(app, ProfileShortcutIds.dynamic(profile.id))
             .setIcon(
                 getDrawableIcon(
                     AppCompatResources.getDrawable(app, R.drawable.ic_round_frozen_shortcut)!!
@@ -114,10 +115,18 @@ object HShortcuts {
     internal fun addPinProfileShortcut(profile: FreezeProfile) {
         addPinShortcut(
             AppCompatResources.getDrawable(app, R.drawable.ic_round_frozen_shortcut)!!,
-            "hail-profile-pin-" + profile.id,
+            ProfileShortcutIds.pinned(profile.id),
             profile.name,
             HailApi.getIntentForProfile(profile.id)
         )
+    }
+
+    internal fun removeProfileShortcuts(profileId: String) {
+        val ids = ProfileShortcutIds.all(profileId)
+        // Launchers own pinned shortcuts: disable them instead of promising removal.
+        ShortcutManagerCompat.disableShortcuts(app, ids, app.getString(R.string.profile_deleted))
+        ShortcutManagerCompat.removeDynamicShortcuts(app, ids)
+        ShortcutManagerCompat.removeLongLivedShortcuts(app, ids)
     }
 
     fun removeAllDynamicShortcuts() {

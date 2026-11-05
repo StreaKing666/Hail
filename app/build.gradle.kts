@@ -36,15 +36,17 @@ android {
         commandLine = "git log -1 --pretty=%s".split(" ")
     }.standardOutput.asText.get().trim()
 
+    val originalPackage = providers.gradleProperty("hailOriginalPackage").getOrElse("false") == "true"
+
     namespace = "com.aistra.hail"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.aistra.hail.enhanced"
+        applicationId = if (originalPackage) "com.aistra.hail" else "com.aistra.hail.enhanced"
         minSdk = 23
         targetSdk = 36
         versionCode = 111011
-        versionName = "1.11.0-enhanced.11"
+        versionName = "1.11.0-enhanced.11" + if (originalPackage) "-original-package" else ""
     }
 
     buildTypes {

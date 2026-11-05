@@ -1,0 +1,6 @@
+id=Hail-Enhanced-PrivApp
+name=Hail Enhanced Privileged (Magisk / KernelSU)
+version=__MODULE_VERSION__
+versionCode=__MODULE_CODE__
+author=+SWAG+ (module); aistra0528 and contributors (Hail); unofficial Enhanced
+description=Systemless privileged Hail __HAIL_VERSION__; API __MIN_SDK__+; Magisk or KernelSU with working metamodule.

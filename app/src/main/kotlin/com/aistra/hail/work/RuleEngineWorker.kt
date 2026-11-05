@@ -3,6 +3,8 @@ package com.aistra.hail.work
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.aistra.hail.app.AppDataAccess
+import kotlinx.coroutines.*
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.FreezeRuleStore
 import com.aistra.hail.enhanced.domain.FreezeOperationReport
@@ -13,7 +15,16 @@ import com.aistra.hail.enhanced.domain.RuleTrigger
 internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        runInterruptible(Dispatchers.IO) { AppDataAccess.access { runRules() } }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        android.util.Log.e("HailRules", "Rule job failed: " + error.javaClass.simpleName)
+        if (runAttemptCount + 1 < MAX_ATTEMPTS) Result.retry() else Result.failure()
+    }
+
+    private fun runRules(): Result {
         val store = FreezeRuleStore(applicationContext)
         if (!store.isEnabled) return Result.success()
         val trigger = runCatching {
@@ -37,6 +48,7 @@ internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
 
         var failed = false
         evaluation.decisions.filter { it.status.name == "READY" }.forEach { decision ->
+            if (Thread.currentThread().isInterrupted) throw InterruptedException("Rule job cancelled")
             val results = AppManager.executeVerified(
                 decision.packages,
                 frozen = decision.action.name == "FREEZE"
@@ -50,7 +62,7 @@ internal class RuleEngineWorker(context: Context, params: WorkerParameters) :
         }
 
         if (failed) {
-            if (runAttemptCount < MAX_ATTEMPTS) return Result.retry()
+            if (runAttemptCount + 1 < MAX_ATTEMPTS) return Result.retry()
             store.appendAudit("Event " + eventId + " stopped after " + MAX_ATTEMPTS + " attempts")
             store.saveExecutionState(evaluation.nextState)
             return Result.failure()

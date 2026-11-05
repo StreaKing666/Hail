@@ -8,3 +8,5 @@
 *.keystore
 *.p12
 *.pfx
+/.kotlin/
+**/__pycache__/

@@ -2,6 +2,14 @@ package com.aistra.hail.ui.main
 
 import android.os.Bundle
 import android.view.Menu
+import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
+import com.aistra.hail.app.AppDataAccess
+import com.aistra.hail.app.RecoveryStatus
+import com.aistra.hail.HailApp
+import kotlinx.coroutines.launch
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -31,6 +39,9 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedListener {
+    private var contentInitialized = false
+    private var recoveryDialog: androidx.appcompat.app.AlertDialog? = null
+    private var recoveryFailed = false
     lateinit var fab: ExtendedFloatingActionButton
     lateinit var appbar: AppBarLayout
     private var bottomNavigation: BottomNavigationView? = null
@@ -39,6 +50,44 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        setContentView(TextView(this).apply {
+            setText(R.string.recovery_checking)
+            gravity = android.view.Gravity.CENTER
+        })
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                AppDataAccess.status.collect { state ->
+                    when (state) {
+                        RecoveryStatus.CHECKING -> Unit
+                        RecoveryStatus.FAILED -> {
+                            recoveryFailed = true
+                            if (recoveryDialog?.isShowing != true) {
+                                recoveryDialog = MaterialAlertDialogBuilder(this@MainActivity)
+                                    .setTitle(R.string.recovery_failed_title)
+                                    .setMessage(R.string.recovery_failed_message)
+                                    .setCancelable(false)
+                                    .setPositiveButton(R.string.recovery_retry) { _, _ ->
+                                        (application as HailApp).retryRecovery()
+                                    }
+                                    .setNegativeButton(R.string.action_exit) { _, _ -> finish() }
+                                    .show()
+                            }
+                        }
+                        RecoveryStatus.READY -> {
+                            recoveryDialog?.dismiss()
+                            if (contentInitialized && recoveryFailed) recreate()
+                            else if (!contentInitialized) {
+                                contentInitialized = true
+                                initializeContent()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun initializeContent() {
         val binding = initView()
         if (!HailData.biometricLogin || BiometricManager.from(this)
                 .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) != BiometricManager.BIOMETRIC_SUCCESS
@@ -63,6 +112,11 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
             .setSubtitle(getString(R.string.msg_biometric)).setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
             .build()
         biometricPrompt.authenticate(promptInfo)
+    }
+
+    override fun onDestroy() {
+        recoveryDialog?.dismiss()
+        super.onDestroy()
     }
 
     private fun initView() = ActivityMainBinding.inflate(layoutInflater).apply {

@@ -8,14 +8,13 @@ import com.aistra.hail.enhanced.domain.FreezeJournalEntry
 import com.aistra.hail.enhanced.domain.FreezeOperationResult
 
 internal object FreezeControllerFacade {
-    @Synchronized
-    fun execute(packageNames: Collection<String>, frozen: Boolean): List<FreezeOperationResult> {
+    fun execute(packageNames: Collection<String>, frozen: Boolean): List<FreezeOperationResult> = AppDataAccess.access {
         val mode = HailData.workingMode
         val controller = FreezeController(
             backends = listOf(ModeFreezeBackend(mode)),
             journal = SharedPreferencesFreezeJournal(app)
         )
-        return controller.execute(
+        controller.execute(
             packageNames = packageNames,
             action = if (frozen) FreezeAction.FREEZE else FreezeAction.UNFREEZE,
             backendId = mode,
@@ -24,8 +23,7 @@ internal object FreezeControllerFacade {
         )
     }
 
-    @Synchronized
-    fun recoverPending() {
+    fun recoverPending() = AppDataAccess.access {
         // Journal entries retain the backend that initiated them. Observe with that backend
         // after restart, even if the user has since selected another working mode.
         val backends = HailData.WORKING_MODE_VALUES
@@ -37,7 +35,6 @@ internal object FreezeControllerFacade {
         ).recoverPending()
     }
 
-    @Synchronized
     fun recentOperations(limit: Int = 50): List<FreezeJournalEntry> =
-        SharedPreferencesFreezeJournal(app).recent(limit)
+        AppDataAccess.access { SharedPreferencesFreezeJournal(app).recent(limit) }
 }

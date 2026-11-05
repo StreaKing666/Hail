@@ -23,7 +23,7 @@ internal class FreezeRuleStore(context: Context) {
             check(defaultPreferences.edit().putBoolean(HailData.RULE_ENGINE_ENABLED, value).commit())
         }
 
-    fun getRules(): List<FreezeRule> = synchronized(STORAGE_LOCK) {
+    fun getRules(): List<FreezeRule> = AppDataAccess.access {
         val json = readDocument().let { if (it.has("rules")) it.getJSONArray("rules") else JSONArray() }
         val rules = List(json.length()) { index ->
             val item = json.getJSONObject(index)
@@ -43,7 +43,7 @@ internal class FreezeRuleStore(context: Context) {
         RuleEngine.validate(rules)
     }
 
-    fun saveRules(rules: List<FreezeRule>) = synchronized(STORAGE_LOCK) {
+    fun saveRules(rules: List<FreezeRule>) = AppDataAccess.access {
         RuleEngine.validate(rules)
         val json = JSONArray()
         rules.forEach { rule ->
@@ -62,7 +62,12 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(document)
     }
 
-    fun getExecutionState(): RuleExecutionState = synchronized(STORAGE_LOCK) {
+    /** One transaction, including the caller's read/modify/write. */
+    fun updateRules(change: (List<FreezeRule>) -> List<FreezeRule>) = AppDataAccess.access {
+        saveRules(change(getRules()))
+    }
+
+    fun getExecutionState(): RuleExecutionState = AppDataAccess.access {
         val json = readDocument().optJSONObject("executionState") ?: JSONObject()
         val timesJson = json.optJSONObject("lastRunAtByRule") ?: JSONObject()
         val times = linkedMapOf<String, Long>()
@@ -74,7 +79,7 @@ internal class FreezeRuleStore(context: Context) {
         RuleExecutionState(times, processed)
     }
 
-    fun saveExecutionState(state: RuleExecutionState) = synchronized(STORAGE_LOCK) {
+    fun saveExecutionState(state: RuleExecutionState) = AppDataAccess.access {
         val times = JSONObject()
         state.lastRunAtByRule.forEach { (id, time) -> times.put(id, time) }
         val processed = JSONArray()
@@ -86,7 +91,7 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(document)
     }
 
-    fun appendAudit(message: String) = synchronized(STORAGE_LOCK) {
+    fun appendAudit(message: String) = AppDataAccess.access {
         val entries = readDocument().optJSONArray("audit") ?: JSONArray()
         val next = JSONArray()
         val old = List(entries.length()) { entries.getString(it) }
@@ -95,7 +100,7 @@ internal class FreezeRuleStore(context: Context) {
         writeDocument(readDocument().put("audit", next))
     }
 
-    private fun readDocument(): JSONObject = synchronized(STORAGE_LOCK) {
+    private fun readDocument(): JSONObject = AppDataAccess.access {
         if (file.isFile) JSONObject(file.readText()) else JSONObject()
     }
 

@@ -24,26 +24,35 @@ internal class ModeFreezeBackend(override val id: String) : FreezeBackend {
     }
 
     override fun isFrozen(packageName: String, userId: Int): Boolean? {
-        if (userId != currentUserId()) return null
-        return when {
-            id.endsWith(HailData.STOP) -> HPackages.isAppStopped(packageName)
-            id.endsWith(HailData.DISABLE) -> HPackages.isAppDisabled(packageName)
-            id.endsWith(HailData.HIDE) -> HPackages.isAppHidden(packageName)
-            id.endsWith(HailData.SUSPEND) -> HPackages.isAppSuspended(packageName)
-            else -> null
-        }
+        if (userId != currentUserId() || HPackages.getApplicationInfoOrNull(packageName) == null) return null
+        return FreezeModePolicy.isFrozen(id, HPackages.isAppDisabled(packageName),
+            HPackages.isAppHidden(packageName), HPackages.isAppSuspended(packageName),
+            HPackages.isAppStopped(packageName))
     }
 
     override fun setFrozen(packageName: String, userId: Int, frozen: Boolean): Boolean {
         if (userId != currentUserId() || packageName == BuildConfig.APPLICATION_ID) return false
         if (!supports(if (frozen) FreezeAction.FREEZE else FreezeAction.UNFREEZE)) return false
-        return when (id) {
+        if (!frozen) {
+            val modes = FreezeModePolicy.thawModes(id, HPackages.isAppDisabled(packageName),
+                HPackages.isAppHidden(packageName), HPackages.isAppSuspended(packageName), HailData.WORKING_MODE_VALUES)
+            var accepted = true
+            modes.forEach { mode ->
+                if (Thread.currentThread().isInterrupted) throw InterruptedException("Operation cancelled")
+                if (!setUsingMode(mode, packageName, false)) accepted = false
+            }
+            return accepted
+        }
+        return setUsingMode(id, packageName, true)
+    }
+
+    private fun setUsingMode(mode: String, packageName: String, frozen: Boolean): Boolean = when (mode) {
             HailData.MODE_OWNER_HIDE -> HPolicy.setAppHidden(packageName, frozen)
             HailData.MODE_OWNER_SUSPEND -> HPolicy.setAppSuspended(packageName, frozen)
             HailData.MODE_DHIZUKU_HIDE -> HDhizuku.setAppHidden(packageName, frozen)
             HailData.MODE_DHIZUKU_SUSPEND -> HDhizuku.setAppSuspended(packageName, frozen)
             HailData.MODE_SU_STOP, HailData.MODE_SHIZUKU_STOP, HailData.MODE_PRIVAPP_STOP ->
-                frozen && when (id) {
+                frozen && when (mode) {
                     HailData.MODE_SU_STOP -> HShell.forceStopApp(packageName)
                     HailData.MODE_SHIZUKU_STOP -> HShizuku.forceStopApp(packageName)
                     else -> HPackages.forceStopApp(packageName)
@@ -60,7 +69,6 @@ internal class ModeFreezeBackend(override val id: String) : FreezeBackend {
                 HPackages.setAppDisabled(packageName, frozen)
             else -> false
         }
-    }
 
     private fun currentUserId(): Int = android.os.Process.myUid() / 100_000
 }

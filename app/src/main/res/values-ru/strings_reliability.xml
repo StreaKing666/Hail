@@ -1,0 +1,22 @@
+<resources>
+    <string name="editor_app_row">%1$s\n%2$s</string>
+    <string name="recovery_checking">Проверка прерванных операций…</string>
+    <string name="recovery_failed_title">Не удалось завершить восстановление</string>
+    <string name="recovery_failed_message">Изменения и автоматизация заблокированы для сохранности данных. Журнал восстановления сохранён. Освободите место или восстановите доступ к файлам и повторите попытку. Не очищайте данные приложения.</string>
+    <string name="recovery_retry">Повторить восстановление</string>
+    <string name="operation_in_progress">Выполняется операция…</string>
+    <string name="editor_rule_name">Название правила</string>
+    <string name="editor_enabled">Включено</string>
+    <string name="editor_disabled">Выключено</string>
+    <string name="editor_apps_hint">Выберите приложения ниже. В профиле переключатели задают требуемое состояние заморозки.</string>
+    <string name="editor_search">Поиск по названию или пакету</string>
+    <string name="editor_load_failed">Не удалось загрузить редактор. Откройте его повторно.</string>
+    <string name="operation_partial_details">Не все приложения удалось обработать. Подробности:</string>
+    <string name="state_verified">Подтверждено</string>
+    <string name="state_failed">Ошибка</string>
+    <string name="state_pending">Ожидает проверки</string>
+    <string name="state_unverified">Не подтверждено</string>
+    <string name="rule_service_failed">Правила сохранены, но фоновый обработчик не запустился. Откройте Hail и проверьте ограничения фоновой работы.</string>
+    <string name="profile_frozen_state">Заморозить: %1$s</string>
+    <string name="action_exit">Выйти</string>
+</resources>

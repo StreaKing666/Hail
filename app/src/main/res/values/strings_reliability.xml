@@ -1,0 +1,22 @@
+<resources>
+    <string name="editor_app_row">%1$s\n%2$s</string>
+    <string name="recovery_checking">Checking interrupted operations…</string>
+    <string name="recovery_failed_title">Data recovery needs attention</string>
+    <string name="recovery_failed_message">Recovery could not finish. Changes and automation are blocked to protect your data. The recovery journal has been kept. Retry after freeing storage or restoring file access. Do not clear app data.</string>
+    <string name="recovery_retry">Retry recovery</string>
+    <string name="operation_in_progress">Operation in progress…</string>
+    <string name="editor_rule_name">Rule name</string>
+    <string name="editor_enabled">Enabled</string>
+    <string name="editor_disabled">Disabled</string>
+    <string name="editor_apps_hint">Choose applications below. Profile switches select the desired frozen state.</string>
+    <string name="editor_search">Search by name or package</string>
+    <string name="editor_load_failed">Could not load the editor. Reopen it and try again.</string>
+    <string name="operation_partial_details">Some applications could not be processed. Details:</string>
+    <string name="state_verified">Verified</string>
+    <string name="state_failed">Failed</string>
+    <string name="state_pending">Pending</string>
+    <string name="state_unverified">Not verified</string>
+    <string name="rule_service_failed">Rules were saved, but the background listener could not start. Open Hail and check background restrictions.</string>
+    <string name="profile_frozen_state">Frozen: %1$s</string>
+    <string name="action_exit">Exit</string>
+</resources>

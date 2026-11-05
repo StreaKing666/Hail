@@ -129,6 +129,16 @@ object HShortcuts {
         ShortcutManagerCompat.removeLongLivedShortcuts(app, ids)
     }
 
+    internal fun refreshProfileShortcuts(profile: FreezeProfile) {
+        // updateShortcuts changes existing pinned/dynamic entries, without creating new ones.
+        ShortcutManagerCompat.updateShortcuts(app, ProfileShortcutIds.all(profile.id).map { id ->
+            ShortcutInfoCompat.Builder(app, id)
+                .setShortLabel(profile.name.take(40)).setLongLabel(profile.name)
+                .setIcon(getDrawableIcon(AppCompatResources.getDrawable(app, R.drawable.ic_round_frozen_shortcut)!!))
+                .setIntent(HailApi.getIntentForProfile(profile.id)).build()
+        })
+    }
+
     fun removeAllDynamicShortcuts() {
         ShortcutManagerCompat.removeAllDynamicShortcuts(app)
     }

@@ -11,6 +11,9 @@ import java.util.concurrent.TimeUnit
 
 internal object RuleScheduler {
     fun enqueue(context: Context, trigger: RuleTrigger) {
+        if (com.aistra.hail.app.AppDataAccess.status.value != com.aistra.hail.app.RecoveryStatus.READY) return
+        val store = com.aistra.hail.app.FreezeRuleStore(context)
+        if (!store.isEnabled) return
         val eventId = trigger.name + "-" + System.currentTimeMillis() / 1000L
         val request = OneTimeWorkRequestBuilder<RuleEngineWorker>()
             .setInputData(

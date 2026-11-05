@@ -6,6 +6,16 @@ import android.content.pm.PackageManager.NameNotFoundException
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
+import com.aistra.hail.app.AppDataAccess
+import com.aistra.hail.app.RecoveryStatus
+import com.aistra.hail.ui.settings.EnhancedOperationsViewModel
+import com.aistra.hail.ui.settings.EnhancedResult
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import androidx.activity.compose.setContent
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -36,11 +46,32 @@ import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork.setAutoFreeze
 
 class ApiActivity : ComponentActivity() {
+    private val profileOperations: EnhancedOperationsViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        runCatching {
-            if (handleAction(intent.action)) finish()
-        }.onFailure(::setErrorDialog)
+        lifecycleScope.launch {
+            val recovery = AppDataAccess.status.first { it != RecoveryStatus.CHECKING }
+            if (recovery != RecoveryStatus.READY) {
+                setErrorDialog(IllegalStateException(getString(R.string.recovery_failed_message)))
+                return@launch
+            }
+            runCatching { if (handleAction(intent.action)) finish() }.onFailure(::setErrorDialog)
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                profileOperations.state.collect { event ->
+                    event.error?.let { profileOperations.consume(event.id); setErrorDialog(IllegalStateException(it)) }
+                    (event.result as? EnhancedResult.Applied)?.let { applied ->
+                        profileOperations.consume(event.id)
+                        if (applied.value.conflicts > 0) setErrorDialog(IllegalStateException(getString(R.string.profile_conflicts, applied.value.conflicts)))
+                        else if (!applied.value.complete) setErrorDialog(IllegalStateException(applied.value.results.filterNot {
+                            it.stateVerified }.joinToString("\n") { it.packageName + ": " + it.reason }))
+                        else { HUI.showToast(R.string.profile_applied, applied.value.profile.name); finish() }
+                    }
+                }
+            }
+        }
     }
 
     private fun handleAction(action: String?): Boolean {
@@ -68,7 +99,7 @@ class ApiActivity : ComponentActivity() {
             HailApi.ACTION_FREEZE_AUTO -> setAutoFreeze(false)
             HailApi.ACTION_LOCK -> lockScreen(false)
             HailApi.ACTION_LOCK_FREEZE -> lockScreen(true)
-            HailApi.ACTION_APPLY_PROFILE -> applyProfile(requireProfileId)
+            HailApi.ACTION_APPLY_PROFILE -> { applyProfile(requireProfileId); return false }
             else -> throw IllegalArgumentException("Unknown action:\n$action")
         }
         return true
@@ -111,14 +142,8 @@ class ApiActivity : ComponentActivity() {
     }
 
     private fun applyProfile(profileId: String) {
-        val result = FreezeProfileManager.apply(this, profileId, allowConflicts = false)
-        if (result.conflicts > 0) {
-            throw IllegalStateException("This profile conflicts with another saved profile. Open Settings and confirm the switch.")
-        }
-        if (!result.complete) {
-            throw IllegalStateException("Some profile operations could not be verified.")
-        }
-        HUI.showToast(R.string.profile_applied, result.profile.name)
+        if (profileOperations.state.value.id != 0L) return
+        profileOperations.run { EnhancedResult.Applied(FreezeProfileManager.apply(app, profileId, allowConflicts = false)) }
     }
 
     private val requireProfileId: String

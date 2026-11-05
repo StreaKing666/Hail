@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 object HailData {
     const val URL_WHY_FREE_SOFTWARE = "https://www.gnu.org/philosophy/free-software-even-more-important.html"
-    const val URL_GITHUB = "https://github.com/Cinematic666/Hail"
+    const val URL_GITHUB = "https://github.com/StreaKing666/Hail"
     const val URL_README = "$URL_GITHUB#readme"
     const val URL_RELEASES = "$URL_GITHUB/releases"
     const val URL_TELEGRAM = "https://t.me/+yvRXYTounDIxODFl"
@@ -221,17 +221,17 @@ object HailData {
 
     fun isChecked(packageName: String): Boolean = checkedList.any { it.packageName == packageName }
 
-    fun addCheckedApp(packageName: String, tagId: Int = 0, saveApps: Boolean = true) {
+    fun addCheckedApp(packageName: String, tagId: Int = 0, saveApps: Boolean = true) = AppDataAccess.access {
         checkedList.add(AppInfo(packageName, tagIdList = mutableListOf(tagId)))
         if (saveApps) saveApps()
     }
 
-    fun removeCheckedApp(packageName: String, saveApps: Boolean = true) {
+    fun removeCheckedApp(packageName: String, saveApps: Boolean = true) = AppDataAccess.access {
         checkedList.removeAll { it.packageName == packageName }
         if (saveApps) saveApps()
     }
 
-    fun saveApps() {
+    fun saveApps() = AppDataAccess.access {
         if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
         check(HFiles.write(appsPath, JSONArray().run {
             checkedList.forEach {
@@ -260,7 +260,7 @@ object HailData {
         }
     }
 
-    fun saveTags() {
+    fun saveTags() = AppDataAccess.access {
         if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
         check(HFiles.write(tagsPath, JSONArray().run {
             tags.forEach {
@@ -277,7 +277,7 @@ object HailData {
         }
     )
 
-    internal fun importTagBackup(backup: TagBackup) {
+    internal fun importTagBackup(backup: TagBackup) = AppDataAccess.access {
         val existing = checkedList.map {
             TagBackupAppState(it.packageName, it.pinned, it.whitelisted, it.tagIdList.toList())
         }
@@ -320,7 +320,7 @@ object HailData {
      * Full restore replaces the tracked app/tag state exactly. Unlike the tag-only importer,
      * it also restores pin and whitelist flags from the archive.
      */
-    internal fun restoreFullBackup(backup: TagBackup) {
+    internal fun restoreFullBackup(backup: TagBackup) = AppDataAccess.access {
         val valid = TagBackupArchive.normalizeAndValidate(backup)
         val previousTags = tags.toList()
         val previousApps = checkedList.map {

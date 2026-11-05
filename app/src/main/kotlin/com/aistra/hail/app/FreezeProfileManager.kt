@@ -37,7 +37,7 @@ internal object FreezeProfileManager {
         ).also { FreezeProfileStore(context).save(it) }
     }
 
-    fun apply(context: Context, profileId: String, allowConflicts: Boolean = false): FreezeProfileApplyResult {
+    fun apply(context: Context, profileId: String, allowConflicts: Boolean = false): FreezeProfileApplyResult = AppDataAccess.access {
         val store = FreezeProfileStore(context)
         val profiles = store.getAll()
         val target = profiles.firstOrNull { it.id == profileId }
@@ -56,7 +56,7 @@ internal object FreezeProfileManager {
             protectedPackages = setOf(context.packageName)
         )
         if (plan.conflicts.isNotEmpty() && !allowConflicts) {
-            return FreezeProfileApplyResult(target, emptyList(), plan.conflicts.size)
+            return@access FreezeProfileApplyResult(target, emptyList(), plan.conflicts.size)
         }
 
         val results = plan.operations.entries
@@ -69,10 +69,10 @@ internal object FreezeProfileManager {
                 "Could not save active freeze profile"
             }
         }
-        return FreezeProfileApplyResult(target, results, plan.conflicts.size)
+        FreezeProfileApplyResult(target, results, plan.conflicts.size)
     }
 
-    fun delete(context: Context, profileId: String) {
+    fun delete(context: Context, profileId: String) = AppDataAccess.access {
         HShortcuts.removeProfileShortcuts(profileId)
         FreezeProfileStore(context).delete(profileId)
         val preferences = PreferenceManager.getDefaultSharedPreferences(context)

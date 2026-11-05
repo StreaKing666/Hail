@@ -9,6 +9,13 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.fragment.app.viewModels
+import com.aistra.hail.ui.settings.EnhancedOperationsViewModel
+import com.aistra.hail.ui.settings.EnhancedResult
+import com.aistra.hail.ui.settings.OperationProgressDialog
+import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
@@ -37,6 +44,31 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 class HomeFragment : MainFragment() {
+    private val restoreOperations: EnhancedOperationsViewModel by viewModels()
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                restoreOperations.state.collect { event ->
+                    OperationProgressDialog.update(childFragmentManager, event.busy)
+                    if (event.error != null) {
+                        Toast.makeText(app, getString(R.string.tag_backup_error, event.error), Toast.LENGTH_LONG).show()
+                        restoreOperations.consume(event.id)
+                    }
+                    if (event.result == EnhancedResult.Restored) {
+                        restoreOperations.consume(event.id)
+                        refreshTags(0)
+                        runCatching { app.setAutoFreezeService(false) }
+                        HShortcuts.addDynamicShortcutAction(HailData.dynamicShortcutAction)
+                        Toast.makeText(app, R.string.full_backup_import_success, Toast.LENGTH_LONG).show()
+                        app.setAppTheme(HailData.appTheme)
+                    }
+                }
+            }
+        }
+    }
+
     var multiselect: Boolean = false
     val selectedList: MutableList<AppInfo> = mutableListOf()
     private var _binding: FragmentHomeBinding? = null
@@ -252,21 +284,9 @@ class HomeFragment : MainFragment() {
                 payload.schemaVersion
             ))
             .setPositiveButton(R.string.full_backup_import_confirm) { _, _ ->
-                lifecycleScope.launch {
-                    try {
-                        FullBackupStorage.restore(payload, mode)
-                        refreshTags(0)
-                        app.setAutoFreezeService(false)
-                        HShortcuts.addDynamicShortcutAction(HailData.dynamicShortcutAction)
-                        Toast.makeText(app, R.string.full_backup_import_success, Toast.LENGTH_LONG).show()
-                        app.setAppTheme(HailData.appTheme)
-                    } catch (error: Exception) {
-                        Toast.makeText(
-                            requireContext(),
-                            getString(R.string.tag_backup_error, error.message ?: error.javaClass.simpleName),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
+                restoreOperations.run {
+                    FullBackupStorage.restore(payload, mode)
+                    EnhancedResult.Restored
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -275,14 +295,13 @@ class HomeFragment : MainFragment() {
 
     private fun writeTagBackup(uri: Uri) {
         val resolver = requireContext().contentResolver
-        val backup = HailData.createTagBackup()
         val applicationId = BuildConfig.APPLICATION_ID
         val versionName = BuildConfig.VERSION_NAME
 
         lifecycleScope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    TagBackupArchive.encode(backup, applicationId, versionName)
+                    AppDataAccess.access { TagBackupArchive.encode(HailData.createTagBackup(), applicationId, versionName) }
                 }
                 withContext(Dispatchers.IO) {
                     val output = resolver.openOutputStream(uri, "wt")

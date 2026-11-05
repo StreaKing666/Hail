@@ -11,7 +11,7 @@ import java.io.File
 internal class FreezeProfileStore(context: Context) {
     private val file = File(File(context.applicationContext.filesDir, "enhanced"), "profiles.json")
 
-    fun getAll(): List<FreezeProfile> = synchronized(STORAGE_LOCK) {
+    fun getAll(): List<FreezeProfile> = AppDataAccess.access {
         val json = JSONArray(if (file.isFile) file.readText() else "[]")
         val profiles = List(json.length()) { index ->
             val item = json.getJSONObject(index)
@@ -29,13 +29,19 @@ internal class FreezeProfileStore(context: Context) {
         FreezeProfileEngine.validate(profiles)
     }
 
-    fun save(profile: FreezeProfile) = synchronized(STORAGE_LOCK) {
+    fun save(profile: FreezeProfile) = AppDataAccess.access {
         val profiles = getAll().filterNot { it.id == profile.id } + profile
         FreezeProfileEngine.validate(profiles)
         writeProfiles(profiles)
     }
 
-    fun delete(id: String) = synchronized(STORAGE_LOCK) {
+    fun update(expected: FreezeProfile, replacement: FreezeProfile) = AppDataAccess.access {
+        val current = getAll().firstOrNull { it.id == expected.id }
+        check(current == expected) { "Profile changed or was deleted; reopen the editor" }
+        save(replacement)
+    }
+
+    fun delete(id: String) = AppDataAccess.access {
         writeProfiles(getAll().filterNot { it.id == id })
     }
 

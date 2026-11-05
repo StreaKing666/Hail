@@ -274,6 +274,14 @@ class TagEditorDialog(private val home: HomeFragment) {
             return
         }
         // Capture identity before mutating the global tab order; the selected index may move.
+        try {
+            com.aistra.hail.app.AppDataAccess.access { saveChanges() }
+        } catch (error: Exception) {
+            com.aistra.hail.utils.HUI.showToast(com.aistra.hail.R.string.operation_failed, error.message ?: "Unknown", true)
+        }
+    }
+
+    private fun saveChanges() {
         val chosenId = home.selectedTagId()
         val prevTags = HailData.tags.toList()
         val prevApps = HailData.checkedList.toList()
@@ -322,12 +330,13 @@ class TagEditorDialog(private val home: HomeFragment) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TagHolder {
             val card = MaterialCardView(context).apply {
+                minimumHeight = context.dp(84)
                 radius = context.dp(16).toFloat()
                 strokeWidth = context.dp(1)
                 cardElevation = 0f
                 useCompatPadding = false
                 layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, context.dp(84)
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply { bottomMargin = context.dp(8) }
             }
             val row = LinearLayout(context).apply {
@@ -346,7 +355,7 @@ class TagEditorDialog(private val home: HomeFragment) {
             val title = TextView(context).apply {
                 textSize = 17f
                 setTypeface(typeface, Typeface.BOLD)
-                maxLines = 1
+                maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
             }
             val subtitle = TextView(context).apply { textSize = 12f; alpha = .72f }
@@ -375,7 +384,18 @@ class TagEditorDialog(private val home: HomeFragment) {
             )
             holder.handle.isEnabled = !fixed
             holder.handle.alpha = if (fixed) .45f else 1f
-            holder.handle.setOnTouchListener { _, event ->
+            holder.handle.setOnClickListener { actionMenu(holder.handle, tag.second) }
+            var touchX = 0f
+            var touchY = 0f
+            var moved = false
+            holder.handle.setOnTouchListener { handle, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    touchX = event.x; touchY = event.y; moved = false
+                }
+                if (event.actionMasked == MotionEvent.ACTION_MOVE &&
+                    (kotlin.math.abs(event.x - touchX) + kotlin.math.abs(event.y - touchY)) >
+                    android.view.ViewConfiguration.get(context).scaledTouchSlop) moved = true
+                if (event.actionMasked == MotionEvent.ACTION_UP && !moved) handle.performClick()
                 if (!fixed && event.actionMasked == MotionEvent.ACTION_DOWN) {
                     touchHelper.startDrag(holder)
                     true
@@ -386,7 +406,9 @@ class TagEditorDialog(private val home: HomeFragment) {
         }
     }
 
-    private fun textAction(symbol: String, description: String) = TextView(context).apply {
+    private fun textAction(symbol: String, description: String) = object : TextView(context) {
+        override fun performClick(): Boolean = super.performClick()
+    }.apply {
         text = symbol
         textSize = 20f
         gravity = Gravity.CENTER

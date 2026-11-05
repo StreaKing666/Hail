@@ -4,38 +4,22 @@ import android.content.SharedPreferences
 import androidx.preference.PreferenceManager
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.HailApp.Companion.app
-import org.json.JSONObject
 import java.io.File
 import com.aistra.hail.utils.AtomicFileStorage
 import java.io.IOException
-import java.security.MessageDigest
 
 internal object FullBackupStorage {
     private const val TAGS_PATH = "v1/tags.json"
     private const val APPS_PATH = "v1/apps.json"
     private const val RECOVERY_DIR = "hail-full-restore"
-    private const val SNAPSHOT_NAME = "pre-restore.zip"
-    private const val JOURNAL_NAME = "journal.json"
 
-    fun createArchive(selection: FullBackupSelection = FullBackupSelection()): ByteArray {
+    fun createArchive(selection: FullBackupSelection = FullBackupSelection()): ByteArray = AppDataAccess.access {
         HailData.saveTags()
         HailData.saveApps()
 
-        val root = app.filesDir.canonicalFile
-        val rootPrefix = root.path + File.separator
-        val files = root.walkTopDown()
-            .filter { it.isFile }
-            .map { file ->
-                val canonical = file.canonicalFile
-                require(canonical.path.startsWith(rootPrefix)) { "App data contains an unsafe file path" }
-                FullBackupFile(
-                    path = canonical.relativeTo(root).path.replace(File.separatorChar, '/'),
-                    bytes = canonical.readBytes()
-                )
-            }
-            .toList()
+        val files = BackupFileReader.read(app.filesDir, selection)
 
-        return FullBackupArchive.encode(
+        FullBackupArchive.encode(
             files = files,
             preferences = PreferenceManager.getDefaultSharedPreferences(app).all,
             applicationId = BuildConfig.APPLICATION_ID,
@@ -53,68 +37,25 @@ internal object FullBackupStorage {
     fun restore(
         payload: FullBackupPayload,
         mode: FullBackupRestoreMode = FullBackupRestoreMode.MERGE
-    ) {
-        val recovery = recoveryDirectory()
-        if (!recovery.exists() && !recovery.mkdirs()) throw IOException("Could not create restore recovery directory")
-        val snapshotFile = File(recovery, SNAPSHOT_NAME)
-        val journalFile = File(recovery, JOURNAL_NAME)
-        val snapshotBytes = createArchive()
-        writeAtomically(snapshotFile, snapshotBytes)
-        val snapshotHash = sha256(snapshotBytes)
-        writeAtomically(
-            journalFile,
-            JSONObject()
-                .put("state", "APPLYING")
-                .put("snapshot", SNAPSHOT_NAME)
-                .put("sha256", snapshotHash)
-                .put("createdAtEpochMs", System.currentTimeMillis())
-                .toString().toByteArray()
-        )
-
+    ) = AppDataAccess.access {
+        val snapshot = createArchive()
         try {
-            applyPayload(payload, mode, resetDeviceBoundPreferences = true)
-            writeAtomically(
-                journalFile,
-                JSONObject().put("state", "COMMITTED").put("sha256", snapshotHash).toString().toByteArray()
-            )
-            cleanupRecovery(recovery)
-        } catch (error: Exception) {
-            val rollbackResult = runCatching {
-                val rollback = FullBackupArchive.decode(snapshotBytes.inputStream())
-                applyPayload(rollback, FullBackupRestoreMode.REPLACE, resetDeviceBoundPreferences = false)
-            }
-            if (rollbackResult.isSuccess) {
-                cleanupRecovery(recovery)
-            } else {
-                error.addSuppressed(rollbackResult.exceptionOrNull()!!)
-                throw IllegalStateException("Restore failed and rollback remains pending in the recovery journal", error)
-            }
+            RestoreJournal(recoveryDirectory()).execute(snapshot,
+                apply = { applyPayload(payload, mode, resetDeviceBoundPreferences = true) },
+                rollback = { bytes ->
+                    val rollback = FullBackupArchive.decode(bytes.inputStream())
+                    applyPayload(rollback, FullBackupRestoreMode.REPLACE, resetDeviceBoundPreferences = false)
+                })
+        } catch (error: RecoveryRequiredException) {
+            AppDataAccess.requireRecovery()
             throw error
         }
     }
 
     fun recoverInterruptedRestore() {
-        val recovery = recoveryDirectory()
-        val journalFile = File(recovery, JOURNAL_NAME)
-        val snapshotFile = File(recovery, SNAPSHOT_NAME)
-        if (!journalFile.isFile) {
-            cleanupRecovery(recovery)
-            return
-        }
-        val journal = runCatching { JSONObject(journalFile.readText()) }.getOrNull()
-        when (journal?.optString("state")) {
-            "COMMITTED" -> cleanupRecovery(recovery)
-            "APPLYING" -> {
-                require(snapshotFile.isFile) { "Restore recovery snapshot is missing" }
-                val bytes = snapshotFile.readBytes()
-                require(sha256(bytes) == journal.optString("sha256")) {
-                    "Restore recovery snapshot checksum mismatch"
-                }
-                val rollback = FullBackupArchive.decode(bytes.inputStream())
-                applyPayload(rollback, FullBackupRestoreMode.REPLACE, resetDeviceBoundPreferences = false)
-                cleanupRecovery(recovery)
-            }
-            else -> throw IllegalStateException("Restore recovery journal is invalid")
+        RestoreJournal(recoveryDirectory()).recover { bytes ->
+            val rollback = FullBackupArchive.decode(bytes.inputStream())
+            applyPayload(rollback, FullBackupRestoreMode.REPLACE, resetDeviceBoundPreferences = false)
         }
     }
 
@@ -219,13 +160,6 @@ internal object FullBackupStorage {
         }
 
     private fun recoveryDirectory() = File(app.noBackupFilesDir, RECOVERY_DIR)
-
-    private fun cleanupRecovery(directory: File) {
-        directory.deleteRecursively()
-    }
-
-    private fun sha256(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private fun writeAtomically(target: File, bytes: ByteArray) = AtomicFileStorage.write(target, bytes)
 }

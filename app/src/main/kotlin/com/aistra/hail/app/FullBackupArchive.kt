@@ -76,7 +76,7 @@ internal object FullBackupArchive {
         versionCode: Int,
         selection: FullBackupSelection = FullBackupSelection()
     ): ByteArray {
-        val allFiles = validateFiles(files)
+        val allFiles = validateFiles(if (selection.includeAdditionalFiles) files else files.filter { it.path in requiredStateFiles })
         val selectedKeys = selection.preferenceKeys?.filterTo(linkedSetOf(), ::isAllowedPreferenceKeyInternal)
         require(selectedKeys == null || selectedKeys.size <= MAX_PREFERENCES) { "Too many selected preference keys" }
         val normalizedFiles = if (selection.includeAdditionalFiles) allFiles else {

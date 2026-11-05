@@ -37,6 +37,12 @@ import androidx.core.view.MenuHost
 import androidx.core.view.MenuProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.fragment.app.viewModels
+import com.aistra.hail.app.AppDataAccess
+import com.aistra.hail.enhanced.domain.EnhancedEditorDraft
+import com.aistra.hail.enhanced.domain.FreezeJournalEntry
+import com.aistra.hail.enhanced.domain.FreezeJournalState
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.R
 import com.aistra.hail.app.AppManager
@@ -72,6 +78,43 @@ import rikka.shizuku.Shizuku
 import java.util.UUID
 
 class SettingsFragment : MainFragment(), MenuProvider {
+    private val operations: EnhancedOperationsViewModel by viewModels()
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        childFragmentManager.setFragmentResultListener(EnhancedEditorDialogFragment.RESULT, viewLifecycleOwner) { _, _ ->
+            refreshRuleService()
+            HUI.showToast(R.string.action_save)
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                operations.state.collect { event ->
+                    OperationProgressDialog.update(childFragmentManager, event.busy)
+                    if (event.error != null) {
+                        HUI.showToast(R.string.operation_failed, event.error, true)
+                        operations.consume(event.id)
+                    }
+                    event.result?.let { result ->
+                        operations.consume(event.id)
+                        when (result) {
+                            is EnhancedResult.Profiles -> displayProfiles(result.values)
+                            is EnhancedResult.Rules -> displayRules(result.values)
+                            is EnhancedResult.Journal -> displayJournal(result.values)
+                            is EnhancedResult.ProfileDraft -> openEditor(EnhancedEditorDraft.forProfile(result.value, true))
+                            is EnhancedResult.Applied -> displayApplied(result.value, result.confirmed)
+                            is EnhancedResult.Changed -> { refreshRuleService(); HUI.showToast(R.string.action_save) }
+                            else -> Unit
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshRuleService() {
+        runCatching { app.setAutoFreezeService() }.onFailure { HUI.showToast(R.string.rule_service_failed) }
+    }
+
     private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -329,8 +372,11 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 key = HailData.RULE_ENGINE_ENABLED,
                 defaultValue = false,
                 onValueChange = { _, value ->
-                    FreezeRuleStore(requireContext()).isEnabled = value
-                    true
+                    operations.run {
+                        AppDataAccess.access { FreezeRuleStore(app).isEnabled = value }
+                        EnhancedResult.Changed
+                    }
+                    false
                 },
                 titleId = R.string.rule_engine_enabled,
                 icon = Icons.Outlined.AutoMode
@@ -507,319 +553,132 @@ class SettingsFragment : MainFragment(), MenuProvider {
     }
 
     private fun showFreezeOperationLog() {
-        val entries = FreezeControllerFacade.recentOperations(50)
-        if (entries.isEmpty()) {
-            MaterialAlertDialogBuilder(requireContext())
-                .setTitle(R.string.freeze_operation_log)
-                .setMessage(R.string.freeze_operation_log_empty)
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-            return
+        operations.run { EnhancedResult.Journal(FreezeControllerFacade.recentOperations(50)) }
+    }
+
+    private fun stateLabel(state: FreezeJournalState) = getString(when (state) {
+        FreezeJournalState.PENDING -> R.string.state_pending
+        FreezeJournalState.VERIFIED -> R.string.state_verified
+        FreezeJournalState.FAILED -> R.string.state_failed
+        FreezeJournalState.UNVERIFIED -> R.string.state_unverified
+    })
+
+    private fun displayJournal(entries: List<FreezeJournalEntry>) {
+        val builder = MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.freeze_operation_log)
+        if (entries.isEmpty()) builder.setMessage(R.string.freeze_operation_log_empty)
+        else builder.setItems(entries.map { entry ->
+            val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(entry.createdAtEpochMs))
+            val action = getString(if (entry.action == com.aistra.hail.enhanced.domain.FreezeAction.FREEZE)
+                R.string.rule_action_freeze else R.string.rule_action_unfreeze)
+            "$time · ${entry.packageName} · $action · ${stateLabel(entry.state)}"
+        }.toTypedArray()) { _, index ->
+            val entry = entries[index]
+            MaterialAlertDialogBuilder(requireContext()).setTitle(entry.packageName)
+                .setMessage(listOfNotNull(entry.backendId, stateLabel(entry.state), entry.reason).joinToString("\n\n"))
+                .setPositiveButton(android.R.string.ok, null).show()
         }
-        val rows = entries.map { entry ->
-            val time = java.text.DateFormat.getDateTimeInstance()
-                .format(java.util.Date(entry.createdAtEpochMs))
-            time + " · " + entry.packageName + " · " + entry.action.name + " · " + entry.state.name
-        }.toTypedArray()
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.freeze_operation_log)
-            .setItems(rows) { _, index ->
-                val entry = entries[index]
-                val detail = buildString {
-                    append(entry.backendId)
-                    append("\n")
-                    append(entry.state.name)
-                    entry.reason?.let {
-                        append("\n\n")
-                        append(it)
-                    }
-                }
-                MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(entry.packageName)
-                    .setMessage(detail)
-                    .setPositiveButton(android.R.string.ok, null)
-                    .show()
-            }
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        builder.setPositiveButton(android.R.string.ok, null).show()
     }
 
     private fun showProfilesDialog() {
-        val profiles = runCatching { FreezeProfileStore(requireContext()).getAll() }.getOrElse {
-            HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
-            return
-        }
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.profile_manage)
-            .setItems(profiles.map { it.name }.toTypedArray()) { _, index ->
-                profiles.getOrNull(index)?.let(::showProfileActions)
-            }
-            .setPositiveButton(R.string.profile_create) { _, _ -> promptProfileName() }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        operations.run { EnhancedResult.Profiles(FreezeProfileStore(app).getAll()) }
     }
 
-    private fun promptProfileName() {
-        val input = EditText(requireContext()).apply {
-            hint = getString(R.string.profile_name)
-            setSingleLine()
-        }
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.profile_create)
-            .setView(input)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                runCatching {
-                    FreezeProfileManager.createFromTracked(requireContext(), input.text.toString())
-                }.onSuccess {
-                    HShortcuts.addProfileShortcut(it)
-                    HUI.showToast(R.string.profile_created)
-                }.onFailure {
-                    HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
+    private fun displayProfiles(profiles: List<FreezeProfile>) {
+        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.profile_manage)
+            .setItems(profiles.map { it.name }.toTypedArray()) { _, index -> showProfileActions(profiles[index]) }
+            .setPositiveButton(R.string.profile_create) { _, _ ->
+                operations.run {
+                    AppDataAccess.access {
+                        val now = System.currentTimeMillis()
+                        val states = HailData.checkedList.filter { it.packageName != app.packageName }
+                            .associate { it.packageName to AppManager.isAppFrozen(it.packageName) }
+                        EnhancedResult.ProfileDraft(FreezeProfile(java.util.UUID.randomUUID().toString(), "", states, now, now))
+                    }
                 }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
     private fun showProfileActions(profile: FreezeProfile) {
-        val actions = arrayOf(
-            getString(R.string.profile_apply),
-            getString(R.string.profile_shortcut),
-            getString(R.string.profile_pin_shortcut),
-            getString(R.string.profile_delete),
-            getString(R.string.enhanced_edit)
-        )
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(profile.name)
-            .setItems(actions) { _, which ->
-                when (which) {
-                    4 -> editProfile(profile)
-                    0 -> applyProfile(profile, false)
-                    1 -> {
-                        HShortcuts.addProfileShortcut(profile)
-                        HUI.showToast(R.string.profile_created)
-                    }
-                    2 -> HShortcuts.addPinProfileShortcut(profile)
-                    3 -> MaterialAlertDialogBuilder(requireContext())
-                        .setTitle(R.string.profile_delete)
-                        .setMessage(profile.name)
-                        .setPositiveButton(android.R.string.ok) { _, _ ->
-                            runCatching { FreezeProfileManager.delete(requireContext(), profile.id) }
-                                .onSuccess { HUI.showToast(R.string.profile_deleted) }
-                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
-                        }
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show()
-                }
+        val actions = intArrayOf(R.string.profile_apply, R.string.profile_shortcut, R.string.profile_pin_shortcut,
+            R.string.profile_delete, R.string.enhanced_edit).map(::getString).toTypedArray()
+        MaterialAlertDialogBuilder(requireContext()).setTitle(profile.name).setItems(actions) { _, index ->
+            when (index) {
+                0 -> applyProfile(profile, false)
+                1 -> HShortcuts.addProfileShortcut(profile)
+                2 -> HShortcuts.addPinProfileShortcut(profile)
+                3 -> MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.profile_delete).setMessage(profile.name)
+                    .setPositiveButton(android.R.string.ok) { _, _ ->
+                        operations.run { FreezeProfileManager.delete(app, profile.id); EnhancedResult.Changed }
+                    }.setNegativeButton(android.R.string.cancel, null).show()
+                4 -> openEditor(EnhancedEditorDraft.forProfile(profile, false))
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
     private fun applyProfile(profile: FreezeProfile, allowConflicts: Boolean) {
-        runCatching {
-            FreezeProfileManager.apply(requireContext(), profile.id, allowConflicts)
-        }.onSuccess { result ->
-            if (result.conflicts > 0 && !allowConflicts) {
-                MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(R.string.profile_apply)
-                    .setMessage(getString(R.string.profile_conflicts, result.conflicts))
-                    .setPositiveButton(R.string.profile_apply_anyway) { _, _ ->
-                        applyProfile(profile, true)
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
-            } else if (result.complete) {
-                HUI.showToast(R.string.profile_applied, profile.name)
-            } else {
-                HUI.showToast(R.string.permission_denied)
+        operations.run { EnhancedResult.Applied(FreezeProfileManager.apply(app, profile.id, allowConflicts), allowConflicts) }
+    }
+
+    private fun displayApplied(result: com.aistra.hail.app.FreezeProfileApplyResult, confirmed: Boolean) {
+        if (result.conflicts > 0 && !confirmed) {
+            MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.profile_apply)
+                .setMessage(getString(R.string.profile_conflicts, result.conflicts))
+                .setPositiveButton(R.string.profile_apply_anyway) { _, _ -> applyProfile(result.profile, true) }
+                .setNegativeButton(android.R.string.cancel, null).show()
+        } else if (result.complete) HUI.showToast(R.string.profile_applied, result.profile.name)
+        else {
+            val details = result.results.filter { !it.stateVerified }.joinToString("\n\n") {
+                it.packageName + "\n" + (it.reason ?: getString(R.string.state_unverified))
             }
-        }.onFailure {
-            HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
+            MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.state_failed)
+                .setMessage(getString(R.string.operation_partial_details) + "\n\n" + details)
+                .setPositiveButton(android.R.string.ok, null).show()
         }
     }
 
     private fun showRulesDialog() {
-        val store = FreezeRuleStore(requireContext())
-        val rules = runCatching { store.getRules() }.getOrElse {
-            HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true)
-            return
-        }
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.rule_manage)
-            .setItems(rules.map { it.name + if (it.enabled) " ✓" else " (off)" }.toTypedArray()) { _, index ->
-                rules.getOrNull(index)?.let(::showRuleActions)
-            }
-            .setPositiveButton(R.string.rule_add) { _, _ -> chooseRuleTrigger() }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        operations.run { EnhancedResult.Rules(FreezeRuleStore(app).getRules()) }
     }
 
-    private fun chooseRuleTrigger() {
-        val triggers = arrayOf(
-            getString(R.string.rule_trigger_screen_off),
-            getString(R.string.rule_trigger_charging),
-            getString(R.string.rule_trigger_not_charging)
-        )
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.rule_add)
-            .setItems(triggers) { _, which ->
-                val trigger = when (which) {
-                    0 -> RuleTrigger.SCREEN_OFF
-                    1 -> RuleTrigger.CHARGING
-                    else -> RuleTrigger.NOT_CHARGING
-                }
-                chooseRuleAction(trigger)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun chooseRuleAction(trigger: RuleTrigger) {
-        val actions = arrayOf(
-            getString(R.string.rule_action_freeze),
-            getString(R.string.rule_action_unfreeze)
-        )
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.rule_add)
-            .setItems(actions) { _, which ->
-                createRule(trigger, if (which == 0) RuleAction.FREEZE else RuleAction.UNFREEZE)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun createRule(trigger: RuleTrigger, action: RuleAction) {
-        val packages = HailData.checkedList
-            .filter { it.packageName != app.packageName }
-            .map { it.packageName }
-            .toSet()
-        if (packages.isEmpty()) {
-            HUI.showToast(R.string.rule_no_tracked_apps)
-            return
-        }
-        val triggerName = when (trigger) {
-            RuleTrigger.SCREEN_OFF -> getString(R.string.rule_trigger_screen_off)
-            RuleTrigger.CHARGING -> getString(R.string.rule_trigger_charging)
-            RuleTrigger.NOT_CHARGING -> getString(R.string.rule_trigger_not_charging)
-        }
-        val actionName = if (action == RuleAction.FREEZE) {
-            getString(R.string.rule_action_freeze)
-        } else getString(R.string.rule_action_unfreeze)
-        val rule = FreezeRule(
-            id = UUID.randomUUID().toString(),
-            name = triggerName + " — " + actionName,
-            enabled = true,
-            trigger = trigger,
-            action = action,
-            packageNames = packages,
-            cooldownMillis = 30_000L
-        )
-        editRule(rule, isNew = true)
+    private fun displayRules(rules: List<FreezeRule>) {
+        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.rule_manage)
+            .setItems(rules.map { it.name + " · " + getString(if (it.enabled)
+                R.string.editor_enabled else R.string.editor_disabled) }.toTypedArray()) { _, index -> showRuleActions(rules[index]) }
+            .setPositiveButton(R.string.rule_add) { _, _ ->
+                val rule = FreezeRule(java.util.UUID.randomUUID().toString(), "", true, RuleTrigger.SCREEN_OFF,
+                    RuleAction.FREEZE, emptySet(), 30_000)
+                openEditor(EnhancedEditorDraft.forRule(rule, true))
+            }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
     private fun showRuleActions(rule: FreezeRule) {
-        val store = FreezeRuleStore(requireContext())
-        val actions = arrayOf(getString(R.string.rule_toggle), getString(R.string.rule_delete), getString(R.string.enhanced_edit))
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(rule.name)
-            .setItems(actions) { _, which ->
-                when (which) {
-                    2 -> editRule(rule)
-                    0 -> {
-                        runCatching {
-                            store.saveRules(store.getRules().map {
-                                if (it.id == rule.id) it.copy(enabled = !it.enabled) else it
-                            })
-                        }.onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
+        MaterialAlertDialogBuilder(requireContext()).setTitle(rule.name)
+            .setItems(arrayOf(getString(R.string.enhanced_edit), getString(if (rule.enabled)
+                R.string.editor_disabled else R.string.editor_enabled), getString(R.string.rule_delete))) { _, index ->
+                when (index) {
+                    0 -> openEditor(EnhancedEditorDraft.forRule(rule, false))
+                    1 -> operations.run {
+                        FreezeRuleStore(app).updateRules { current ->
+                            check(current.firstOrNull { it.id == rule.id } == rule) { "Rule changed; reopen it" }
+                            current.map { if (it.id == rule.id) it.copy(enabled = !it.enabled) else it }
+                        }
+                        EnhancedResult.Changed
                     }
-                    1 -> MaterialAlertDialogBuilder(requireContext())
-                        .setTitle(R.string.rule_delete)
+                    2 -> MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.rule_delete).setMessage(rule.name)
                         .setPositiveButton(android.R.string.ok) { _, _ ->
-                            runCatching { store.saveRules(store.getRules().filterNot { it.id == rule.id }) }
-                                .onSuccess { HUI.showToast(R.string.rule_deleted) }
-                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
-                        }
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show()
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun choosePackages(existing: Set<String>, onSave: (Set<String>) -> Unit) {
-        val packages = (existing + HailData.checkedList.map { it.packageName })
-            .filter { it != app.packageName }.sorted()
-        val selected = existing.toMutableSet()
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.enhanced_choose_apps)
-            .setMultiChoiceItems(packages.toTypedArray(), BooleanArray(packages.size) {
-                packages[it] in selected
-            }) { _, index, checked ->
-                if (checked) selected.add(packages[index]) else selected.remove(packages[index])
-            }
-            .setPositiveButton(android.R.string.ok) { _, _ -> onSave(selected.toSet()) }
-            .setNegativeButton(android.R.string.cancel, null).show()
-    }
-
-    private fun editProfile(profile: FreezeProfile) {
-        val name = EditText(requireContext()).apply { setSingleLine(); setText(profile.name) }
-        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.profile_name).setView(name)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val draftName = name.text.toString()
-                choosePackages(profile.packageStates.keys) { packages ->
-                    val ordered = packages.sorted()
-                    val frozen = packages.filterTo(mutableSetOf()) { profile.packageStates[it] == true }
-                    MaterialAlertDialogBuilder(requireContext())
-                        .setTitle(R.string.enhanced_frozen_apps)
-                        .setMultiChoiceItems(ordered.toTypedArray(), BooleanArray(ordered.size) {
-                            ordered[it] in frozen
-                        }) { _, index, checked ->
-                            if (checked) frozen.add(ordered[index]) else frozen.remove(ordered[index])
-                        }
-                        .setPositiveButton(R.string.action_save) { _, _ ->
-                            runCatching {
-                                val edited = EnhancedEditors.profile(profile, draftName,
-                                    ordered.associateWith { it in frozen }, System.currentTimeMillis(), app.packageName)
-                                FreezeProfileStore(requireContext()).save(edited)
-                            }.onSuccess { HUI.showToast(R.string.action_save) }
-                                .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
-                        }
-                        .setNegativeButton(android.R.string.cancel, null).show()
+                            operations.run {
+                                FreezeRuleStore(app).updateRules { current -> current.filterNot { it.id == rule.id } }
+                                EnhancedResult.Changed
+                            }
+                        }.setNegativeButton(android.R.string.cancel, null).show()
                 }
             }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
-    private fun editRule(rule: FreezeRule, isNew: Boolean = false) {
-        val name = EditText(requireContext()).apply {
-            setSingleLine(); hint = getString(R.string.profile_name); setText(rule.name)
-        }
-        val cooldown = EditText(requireContext()).apply {
-            setSingleLine(); inputType = InputType.TYPE_CLASS_NUMBER
-            hint = getString(R.string.enhanced_cooldown_seconds)
-            setText((rule.cooldownMillis / 1000).toString())
-        }
-        val form = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(name); addView(MaterialTextView(context).apply { setText(R.string.enhanced_cooldown_seconds) })
-            addView(cooldown)
-        }
-        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.enhanced_edit).setView(form)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val draftName = name.text.toString()
-                val draftCooldown = cooldown.text.toString()
-                choosePackages(rule.packageNames) { packages ->
-                    runCatching {
-                        val edited = EnhancedEditors.rule(rule, draftName, packages, draftCooldown, app.packageName)
-                        val store = FreezeRuleStore(requireContext())
-                        val current = store.getRules()
-                        check(isNew || current.any { it.id == rule.id }) { "Rule was deleted" }
-                        store.saveRules(current.filterNot { it.id == rule.id } + edited)
-                    }.onSuccess { HUI.showToast(R.string.action_save) }
-                        .onFailure { HUI.showToast(R.string.operation_failed, it.message ?: "Unknown", true) }
-                }
-            }.setNegativeButton(android.R.string.cancel, null).show()
+    private fun openEditor(draft: EnhancedEditorDraft) {
+        if (!childFragmentManager.isStateSaved && childFragmentManager.findFragmentByTag("enhanced-editor") == null)
+            EnhancedEditorDialogFragment.create(draft).show(childFragmentManager, "enhanced-editor")
     }
 
     fun onWorkingModeChange(rememberState: MutableState<String>, mode: String): Boolean {

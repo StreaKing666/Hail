@@ -19,15 +19,8 @@ object AppManager {
         }
 
     fun isAppFrozen(packageName: String): Boolean = with(HailData.workingMode) {
-        when {
-            endsWith(HailData.STOP) -> HPackages.isAppStopped(packageName)
-            endsWith(HailData.DISABLE) -> HPackages.isAppDisabled(packageName)
-            endsWith(HailData.HIDE) -> HPackages.isAppHidden(packageName)
-            endsWith(HailData.SUSPEND) -> HPackages.isAppSuspended(packageName)
-            else -> HPackages.isAppDisabled(packageName)
-                    || HPackages.isAppHidden(packageName)
-                    || HPackages.isAppSuspended(packageName)
-        }
+        FreezeModePolicy.isFrozen(this, HPackages.isAppDisabled(packageName),
+            HPackages.isAppHidden(packageName), HPackages.isAppSuspended(packageName), HPackages.isAppStopped(packageName))
     }
 
     internal fun executeVerified(packageNames: Collection<String>, frozen: Boolean) =

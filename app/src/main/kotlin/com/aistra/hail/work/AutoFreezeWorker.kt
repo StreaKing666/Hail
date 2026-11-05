@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.aistra.hail.HailApp.Companion.app
+import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
@@ -11,7 +12,15 @@ import com.aistra.hail.services.AutoFreezeService
 import com.aistra.hail.utils.HSystem
 
 class AutoFreezeWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result {
+    override fun doWork(): Result = try {
+        AppDataAccess.access { freezeNow() }
+    } catch (error: Exception) {
+        android.util.Log.e("HailAutoFreeze", "Job failed: " + error.javaClass.simpleName)
+        if (runAttemptCount < 4) Result.retry() else Result.failure()
+    }
+
+    private fun freezeNow(): Result {
+        if (inputData.getBoolean(HailData.ACTION_LOCK, true) && !HailData.autoFreezeAfterLock) return Result.success()
         if ((inputData.getBoolean(HailData.ACTION_LOCK, true)
                     && HSystem.isInteractive(applicationContext))
             || isSkipWhileCharging(applicationContext)
@@ -22,7 +31,7 @@ class AutoFreezeWorker(context: Context, params: WorkerParameters) : Worker(cont
         return if (summary.incomplete) {
             Result.failure()
         } else {
-            app.setAutoFreezeService()
+            runCatching { app.setAutoFreezeService() }
             Result.success()
         }
     }

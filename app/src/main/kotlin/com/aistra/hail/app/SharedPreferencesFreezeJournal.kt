@@ -39,9 +39,9 @@ internal class SharedPreferencesFreezeJournal(context: Context) : FreezeOperatio
         return readEntries().takeLast(limit).asReversed()
     }
 
-    private fun readEntries(): List<FreezeJournalEntry> = runCatching {
+    private fun readEntries(): List<FreezeJournalEntry> {
         val json = JSONArray(preferences.getString(KEY_ENTRIES, "[]"))
-        List(json.length()) { index ->
+        return List(json.length()) { index ->
             val item = json.getJSONObject(index)
             FreezeJournalEntry(
                 id = item.getString("id"),
@@ -55,7 +55,7 @@ internal class SharedPreferencesFreezeJournal(context: Context) : FreezeOperatio
                 reason = item.optString("reason").takeIf { it.isNotBlank() && it != "null" }
             )
         }
-    }.getOrDefault(emptyList())
+    }
 
     private fun writeEntries(entries: List<FreezeJournalEntry>) {
         val json = JSONArray()

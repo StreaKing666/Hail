@@ -1,4 +1,4 @@
-# Hail Enhanced Privileged / Enhanced .12
+# Hail Enhanced Privileged / Enhanced .14
 Unofficial systemless wrapper derived from Hail Universal Privileged (+SWAG+).
 The signed com.aistra.hail.enhanced APK is embedded byte-for-byte without re-signing.
 Use Magisk or KernelSU/ReSukiSU with one working system-mount metamodule.

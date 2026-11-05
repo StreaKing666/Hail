@@ -11,7 +11,7 @@ import com.aistra.hail.HailApp.Companion.app
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 object HPackages {
-    val myUserId get() = android.os.Process.myUserHandle().hashCode()
+    val myUserId get() = android.os.Process.myUid() / 100_000
 
     fun packageUri(packageName: String) = "package:$packageName"
 
@@ -20,28 +20,28 @@ object HPackages {
         packageName, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
     ) else app.packageManager.getPackageUid(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
 
-    fun getInstalledApplications(flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192): List<ApplicationInfo> =
+    fun getInstalledApplications(): List<ApplicationInfo> =
         if (HTarget.T) app.packageManager.getInstalledApplications(
-            PackageManager.ApplicationInfoFlags.of(flags.toLong())
+            PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
         )
-        else app.packageManager.getInstalledApplications(flags)
+        else app.packageManager.getInstalledApplications(PackageManager.GET_UNINSTALLED_PACKAGES)
 
     fun getUnhiddenPackageInfoOrNull(
-        packageName: String, flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192
+        packageName: String
     ) = runCatching {
         if (HTarget.T) app.packageManager.getPackageInfo(
-            packageName, PackageManager.PackageInfoFlags.of(flags.toLong())
+            packageName, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
         )
-        else app.packageManager.getPackageInfo(packageName, flags)
+        else app.packageManager.getPackageInfo(packageName, PackageManager.GET_UNINSTALLED_PACKAGES)
     }.getOrNull()
 
     fun getApplicationInfoOrNull(
-        packageName: String, flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192
+        packageName: String
     ) = runCatching {
         if (HTarget.T) app.packageManager.getApplicationInfo(
-            packageName, PackageManager.ApplicationInfoFlags.of(flags.toLong())
+            packageName, PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
         )
-        else app.packageManager.getApplicationInfo(packageName, flags)
+        else app.packageManager.getApplicationInfo(packageName, PackageManager.GET_UNINSTALLED_PACKAGES)
     }.getOrNull()
 
     fun isAppDisabled(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.enabled?.not() ?: false

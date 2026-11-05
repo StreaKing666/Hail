@@ -58,7 +58,9 @@ object HPolicy {
 
     @Suppress("DEPRECATION")
     fun removeProfileOwner() {
-        if (isProfileOwner) dpm.clearProfileOwner(admin)
+        if (HTarget.N) {
+            if (isProfileOwner) dpm.clearProfileOwner(admin)
+        } else error("Removing a profile owner requires Android 7 or newer")
     }
 
     @Suppress("DEPRECATION")

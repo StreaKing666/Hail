@@ -4,17 +4,22 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 object HShell {
-    private fun getCurrentUserId(): Int = execSU("am get-current-user").second?.trim()?.toIntOrNull() ?: 0
+    // Foreground Android user can differ from this app's user (work profile/multiuser).
+    private fun getCurrentUserId(): Int = android.os.Process.myUid() / 100_000
 
     private val userArg: String
         get() = "--user ${getCurrentUserId()}"
 
-    fun execute(command: String, root: Boolean): Pair<Int, String?> = runCatching {
-        ProcessBuilder(if (root) "su" else "sh").redirectErrorStream(true).start().run {
-            outputStream.use { it.write(command.toByteArray()) }
-            waitFor() to inputStream.bufferedReader().use { it.readText() }.also { destroy() }
+    fun execute(command: String, root: Boolean): Pair<Int, String?> {
+        val result = BoundedProcessRunner.run(listOf(if (root) "su" else "sh"), command)
+        val status = when {
+            result.cancelled -> "\nCancelled"
+            result.timedOut -> "\nCommand timed out; verify the actual package state before retrying"
+            result.truncated -> "\n[Output truncated]"
+            else -> ""
         }
-    }.getOrElse { 1 to it.stackTraceToString() }
+        return result.exitCode to result.output + status
+    }
 
     private fun execSU(command: String) = execute(command, true)
 

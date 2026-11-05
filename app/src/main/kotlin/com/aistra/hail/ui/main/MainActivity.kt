@@ -2,12 +2,14 @@ package com.aistra.hail.ui.main
 
 import android.os.Bundle
 import android.view.Menu
-import android.widget.TextView
+import android.widget.ProgressBar
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.app.RecoveryStatus
+import com.aistra.hail.app.RecoveryUiPolicy
+import com.aistra.hail.app.RecoveryUiAction
 import com.aistra.hail.HailApp
 import kotlinx.coroutines.launch
 import androidx.appcompat.app.AppCompatActivity
@@ -39,9 +41,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedListener {
-    private var contentInitialized = false
     private var recoveryDialog: androidx.appcompat.app.AlertDialog? = null
-    private var recoveryFailed = false
+    private var recoveryDialogState: RecoveryStatus? = null
     lateinit var fab: ExtendedFloatingActionButton
     lateinit var appbar: AppBarLayout
     private var bottomNavigation: BottomNavigationView? = null
@@ -50,18 +51,28 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        setContentView(TextView(this).apply {
-            setText(R.string.recovery_checking)
-            gravity = android.view.Gravity.CENTER
-        })
+        // FragmentManager must always find restored NavHost/DialogFragment containers,
+        // including process recreation while journal recovery is still running.
+        val binding = initView()
+        binding.root.isVisible = false
+        val policy = RecoveryUiPolicy(AppDataAccess.status.value)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 AppDataAccess.status.collect { state ->
-                    when (state) {
-                        RecoveryStatus.CHECKING -> Unit
-                        RecoveryStatus.FAILED -> {
-                            recoveryFailed = true
-                            if (recoveryDialog?.isShowing != true) {
+                    when (policy.onStatus(state)) {
+                        RecoveryUiAction.PROGRESS -> {
+                            if (recoveryDialogState != state) {
+                                recoveryDialog?.dismiss()
+                                recoveryDialogState = state
+                                recoveryDialog = MaterialAlertDialogBuilder(this@MainActivity)
+                                    .setTitle(R.string.recovery_checking)
+                                    .setView(ProgressBar(this@MainActivity)).setCancelable(false).show()
+                            }
+                        }
+                        RecoveryUiAction.FAILURE -> {
+                            if (recoveryDialogState != state) {
+                                recoveryDialog?.dismiss()
+                                recoveryDialogState = state
                                 recoveryDialog = MaterialAlertDialogBuilder(this@MainActivity)
                                     .setTitle(R.string.recovery_failed_title)
                                     .setMessage(R.string.recovery_failed_message)
@@ -69,29 +80,22 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
                                     .setPositiveButton(R.string.recovery_retry) { _, _ ->
                                         (application as HailApp).retryRecovery()
                                     }
-                                    .setNegativeButton(R.string.action_exit) { _, _ -> finish() }
-                                    .show()
+                                    .setNegativeButton(R.string.action_exit) { _, _ -> finish() }.show()
                             }
                         }
-                        RecoveryStatus.READY -> {
-                            recoveryDialog?.dismiss()
-                            if (contentInitialized && recoveryFailed) recreate()
-                            else if (!contentInitialized) {
-                                contentInitialized = true
-                                initializeContent()
-                            }
-                        }
+                        RecoveryUiAction.RECREATE -> { recoveryDialog?.dismiss(); recreate() }
+                        RecoveryUiAction.INITIALIZE -> { recoveryDialog?.dismiss(); initializeContent(binding) }
+                        RecoveryUiAction.NONE -> Unit
                     }
                 }
             }
         }
     }
 
-    private fun initializeContent() {
-        val binding = initView()
+    private fun initializeContent(binding: ActivityMainBinding) {
         if (!HailData.biometricLogin || BiometricManager.from(this)
                 .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) != BiometricManager.BIOMETRIC_SUCCESS
-        ) return
+        ) { binding.root.isVisible = true; return }
         binding.root.isVisible = false
         val biometricPrompt = BiometricPrompt(
             this,

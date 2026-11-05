@@ -38,3 +38,9 @@ and compile results are not a substitute. Artifact checks will run after signing
 Ruling: preserve other Android users when uninstalling; root/Shizuku now always use the
 current Hail process user. Cost: uninstall no longer implicitly removes all users' copies.
 Final review: minor (deferred): none from the reviewer.
+
+Additional lifecycle finding in the same fix pass: a temporary content view during
+startup recovery could leave FragmentManager without restored NavHost containers.
+Always create the real containers, keep content invisible until recovery/authentication,
+and recreate once after reconciliation. RecoveryUiPolicy RED -> GREEN covers normal,
+pending-startup and retry transitions. Real Android lifecycle acceptance remains NOT_RUN.

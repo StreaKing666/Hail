@@ -4,8 +4,6 @@ import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-internal enum class RecoveryStatus { CHECKING, READY, FAILED }
-
 internal object AppDataAccess {
     private val coordinator = DataOperationCoordinator { Looper.myLooper() == Looper.getMainLooper() }
         .apply { requireRecovery() }

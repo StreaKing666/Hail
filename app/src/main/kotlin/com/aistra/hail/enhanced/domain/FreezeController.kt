@@ -1,6 +1,7 @@
 package com.aistra.hail.enhanced.domain
 
 import java.util.UUID
+import java.util.concurrent.CancellationException
 
 internal enum class FreezeJournalState { PENDING, VERIFIED, FAILED, UNVERIFIED }
 
@@ -22,6 +23,8 @@ internal interface FreezeBackend {
     /** Null means that this backend cannot reliably observe the current state. */
     fun isFrozen(packageName: String, userId: Int): Boolean?
     fun setFrozen(packageName: String, userId: Int, frozen: Boolean): Boolean
+    /** Optional diagnostic for the most recent setFrozen call on this backend instance. */
+    fun failureReason(): String? = null
 }
 
 internal interface FreezeOperationJournal {
@@ -77,7 +80,8 @@ internal class InMemoryFreezeOperationJournal(
 internal class FreezeController(
     backends: Collection<FreezeBackend>,
     private val journal: FreezeOperationJournal,
-    private val now: () -> Long = System::currentTimeMillis
+    private val now: () -> Long = System::currentTimeMillis,
+    private val sleeper: (Long) -> Unit = Thread::sleep
 ) {
     private val backendsById = backends.associateBy { it.id }
 
@@ -99,9 +103,7 @@ internal class FreezeController(
     fun recoverPending(): List<FreezeOperationResult> =
         journal.pending().map { entry ->
             val backend = backendsById[entry.backendId]
-            val observed = runCatching {
-                backend?.isFrozen(entry.packageName, entry.userId)
-            }.getOrNull()
+            val observed = safelyObserve { backend?.isFrozen(entry.packageName, entry.userId) }
             val recovered = observed == entry.targetFrozen
             val completed = entry.copy(
                 state = if (recovered) FreezeJournalState.VERIFIED else FreezeJournalState.FAILED,
@@ -133,6 +135,7 @@ internal class FreezeController(
         protectedPackages: Set<String>,
         backend: FreezeBackend?
     ): FreezeOperationResult {
+        checkInterrupted()
         if (!PACKAGE_NAME.matches(packageName)) {
             return result(packageName, action, backendId, userId, FreezeOutcome.FAILED, false, "Invalid package name")
         }
@@ -142,12 +145,12 @@ internal class FreezeController(
         if (backend == null) {
             return result(packageName, action, backendId, userId, FreezeOutcome.FAILED, false, "Backend is unavailable")
         }
-        if (!runCatching { backend.supports(action) }.getOrDefault(false)) {
+        if (safelyObserve { backend.supports(action) } != true) {
             return result(packageName, action, backendId, userId, FreezeOutcome.SKIPPED, false, "Backend does not support this action")
         }
 
         val targetFrozen = action == FreezeAction.FREEZE
-        val before = runCatching { backend.isFrozen(packageName, userId) }.getOrNull()
+        val before = safelyObserve { backend.isFrozen(packageName, userId) }
         if (before == targetFrozen) {
             return result(packageName, action, backendId, userId, FreezeOutcome.SUCCESS, true, "Already in the requested state")
         }
@@ -165,13 +168,17 @@ internal class FreezeController(
         )
         return try {
             journal.appendPending(pending)
+            checkInterrupted()
             val accepted = backend.setFrozen(packageName, userId, targetFrozen)
-            val after = backend.isFrozen(packageName, userId)
+            val commandFailure = if (accepted) null else safelyObserve { backend.failureReason() }
+                ?.replace(Regex("[\\p{Cntrl}]"), " ")?.trim()?.take(1024)?.takeIf { it.isNotEmpty() }
+            val after = awaitObservedState(backend, packageName, userId, targetFrozen)
             val verified = after == targetFrozen
             val outcome = if (verified) FreezeOutcome.SUCCESS else FreezeOutcome.FAILED
             val reason = when {
                 verified && !accepted -> "Backend returned failure, but the requested state was verified"
                 verified -> null
+                commandFailure != null -> commandFailure
                 after == null -> "Backend command completed without a verifiable state"
                 else -> "Observed state does not match the requested state"
             }
@@ -187,11 +194,49 @@ internal class FreezeController(
             )
             result(packageName, action, backendId, userId, outcome, verified, reason)
         } catch (error: Exception) {
+            // A cancelled command may have changed state. Leave its intent pending so recovery
+            // can reconcile the state without replaying it.
+            rethrowCancellation(error)
             val reason = error.message ?: error.javaClass.simpleName
-            runCatching {
+            safelyObserve {
                 journal.complete(pending.copy(state = FreezeJournalState.FAILED, reason = reason))
             }
             result(packageName, action, backendId, userId, FreezeOutcome.FAILED, false, reason)
+        }
+    }
+
+    private fun awaitObservedState(
+        backend: FreezeBackend, packageName: String, userId: Int, targetFrozen: Boolean
+    ): Boolean? {
+        var observed = safelyObserve { backend.isFrozen(packageName, userId) }
+        repeat(VERIFICATION_RETRIES) {
+            if (observed == targetFrozen) return observed
+            checkInterrupted()
+            sleeper(VERIFICATION_INTERVAL_MS)
+            observed = safelyObserve { backend.isFrozen(packageName, userId) }
+        }
+        return observed
+    }
+
+    private inline fun <T> safelyObserve(block: () -> T): T? = try {
+        checkInterrupted()
+        block()
+    } catch (error: Exception) {
+        rethrowCancellation(error)
+        null
+    }
+
+    private fun checkInterrupted() {
+        if (Thread.currentThread().isInterrupted) throw InterruptedException("Operation cancelled")
+    }
+
+    private fun rethrowCancellation(error: Exception) {
+        when (error) {
+            is InterruptedException -> {
+                Thread.currentThread().interrupt()
+                throw error
+            }
+            is CancellationException -> throw error
         }
     }
 
@@ -206,6 +251,46 @@ internal class FreezeController(
     ) = FreezeOperationResult(packageName, userId, action, backendId, outcome, verified, reason)
 
     private companion object {
+        const val VERIFICATION_RETRIES = 10
+        const val VERIFICATION_INTERVAL_MS = 100L
         val PACKAGE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*")
+    }
+}
+
+/** Persist recognized platform failure categories, never arbitrary shell output or command text. */
+internal object FreezeFailureDiagnostics {
+    private val permission = Regex("android\\.permission\\.[A-Z][A-Z0-9_]*")
+
+    fun shell(exitCode: Int, output: String?): String {
+        val text = output.orEmpty()
+        // Runner status is appended after stdout, including when stdout was truncated.
+        val detail = category(text.take(16_384) + "\n" + text.takeLast(16_384))
+        return ("Shell command failed (exit $exitCode)" + if (detail == null) "" else ": $detail").take(1024)
+    }
+
+    fun privileged(error: Throwable): String {
+        val type = error.javaClass.simpleName.take(80)
+        val detail = category(error.message.orEmpty().take(32_768))
+        return ("Privileged command failed ($type)" + if (detail == null) "" else ": $detail").take(1024)
+    }
+
+    private fun category(text: String): String? {
+        val lower = text.lowercase(java.util.Locale.ROOT)
+        val requiredPermission = permission.findAll(text).map { it.value }.distinct().take(4).toList()
+        return when {
+            "timed out" in lower || "timeout" in lower -> "Command timed out"
+            "cancelled" in lower || "canceled" in lower -> "Command cancelled"
+            requiredPermission.isNotEmpty() -> "Required permission: " + requiredPermission.joinToString(", ")
+            "securityexception" in lower -> "SecurityException: operation denied"
+            "root access denied" in lower || "root permission denied" in lower ||
+                "su: permission denied" in lower -> "Root access denied"
+            "permission denied" in lower || "permission denial" in lower -> "Permission denied"
+            "not allowed" in lower || "access denied" in lower -> "Operation denied"
+            "unknown command" in lower || "not supported" in lower || "unsupported" in lower -> "Unsupported command"
+            "not found" in lower || "unknown package" in lower -> "Command or package not found"
+            "illegalargumentexception" in lower || "invalid argument" in lower -> "Invalid argument"
+            "unavailable" in lower -> "Required package or service unavailable"
+            else -> null
+        }
     }
 }

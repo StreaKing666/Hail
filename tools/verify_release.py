@@ -31,8 +31,8 @@ def verify(clone, original, module, aapt2):
             assert archive.testzip() is None, 'APK ZIP corruption'
             manifest = read_manifest(archive)
         assert manifest['package'] == package, 'Wrong package identity'
-        assert manifest['versionCode'] == 111013, 'Wrong version code'
-        assert str(manifest['versionName']).startswith('1.11.0-enhanced.13'), 'Wrong version name'
+        assert manifest['versionCode'] == 111014, 'Wrong version code'
+        assert str(manifest['versionName']).startswith('1.11.0-enhanced.14'), 'Wrong version name'
         assert manifest['minSdkVersion'] == 23, 'Android 6 compatibility floor changed'
         assert ('-original-package' in manifest['versionName']) == (package == 'com.aistra.hail')
         signer = verify_apk_v2(path)  # Includes full APK content authentication and pinned certificate.

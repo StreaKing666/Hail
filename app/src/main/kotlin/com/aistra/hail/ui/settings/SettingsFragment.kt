@@ -79,6 +79,7 @@ import java.util.UUID
 
 class SettingsFragment : MainFragment(), MenuProvider {
     private val operations: EnhancedOperationsViewModel by viewModels()
+    private var modeRequest = 0L
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -681,7 +682,41 @@ class SettingsFragment : MainFragment(), MenuProvider {
             EnhancedEditorDialogFragment.create(draft).show(childFragmentManager, "enhanced-editor")
     }
 
+    private fun applyWorkingMode(state: MutableState<String>, mode: String, request: Long) {
+        if (request != modeRequest || !isAdded || view == null) return
+        AppDataAccess.tryAccess { state.value = mode }.onSuccess {
+            activity.invalidateOptionsMenu()
+            app.setAutoFreezeService()
+        }.onFailure { HUI.showToast(R.string.operation_failed, HUI.operationError(it), true) }
+    }
+
     fun onWorkingModeChange(rememberState: MutableState<String>, mode: String): Boolean {
+        val request = ++modeRequest
+        if (mode.startsWith(HailData.SU) || mode == HailData.MODE_JAILBREAK_DISABLE) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    val allowed = kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                        if (mode.startsWith(HailData.SU)) {
+                            val checked = HShell.execute("whoami", true)
+                            check(checked.first == 0) {
+                                com.aistra.hail.enhanced.domain.FreezeFailureDiagnostics.shell(checked.first, checked.second)
+                            }
+                            true
+                        } else {
+                            if (ContextCompat.checkSelfPermission(app, CHANGE_COMPONENT_ENABLED_STATE) != PackageManager.PERMISSION_GRANTED) {
+                                HShell.grantPermission(app.packageName, CHANGE_COMPONENT_ENABLED_STATE)
+                            }
+                            ContextCompat.checkSelfPermission(app, CHANGE_COMPONENT_ENABLED_STATE) == PackageManager.PERMISSION_GRANTED
+                        }
+                    }
+                    if (request != modeRequest) return@launch
+                    if (allowed) applyWorkingMode(rememberState, mode, request)
+                    else HUI.showToast(R.string.permission_denied)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (error: Exception) { HUI.showToast(R.string.operation_failed, HUI.operationError(error), true) }
+            }
+            return false
+        }
         // Show/hide terminal menu.
         activity.invalidateOptionsMenu()
         when {
@@ -709,7 +744,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
                                 awaitClose()
                             }.first()
                             if (result) {
-                                rememberState.value = mode
+                                applyWorkingMode(rememberState, mode, request)
                                 if (HTarget.O) HDhizuku.setDelegatedScopes()
                             }
                         }
@@ -720,22 +755,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 HLog.e(it)
                 HUI.showToast(R.string.permission_denied)
                 false
-            }
-
-            mode.startsWith(HailData.SU) -> if (!HShell.checkSU) {
-                HUI.showToast(R.string.permission_denied)
-                return false
-            }
-
-            mode == HailData.MODE_JAILBREAK_DISABLE -> if (
-                ContextCompat.checkSelfPermission(
-                    requireContext(),
-                    CHANGE_COMPONENT_ENABLED_STATE
-                ) == PackageManager.PERMISSION_DENIED
-                && !HShell.grantPermission(requireContext().packageName, CHANGE_COMPONENT_ENABLED_STATE)
-            ) {
-                HUI.showToast(R.string.permission_denied)
-                return false
+            }.let { granted ->
+                if (granted) applyWorkingMode(rememberState, mode, request)
+                false
             }
 
             mode.startsWith(HailData.SHIZUKU) -> return runCatching {
@@ -761,7 +783,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
                                     Shizuku.removeRequestPermissionResultListener(listener)
                                 }
                             }.first()
-                            if (result) rememberState.value = mode
+                            if (result) applyWorkingMode(rememberState, mode, request)
                         }
                         false
                     }
@@ -769,6 +791,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
             }.getOrElse {
                 HLog.e(it)
                 HUI.showToast(R.string.shizuku_missing)
+                false
+            }.let { granted ->
+                if (granted) applyWorkingMode(rememberState, mode, request)
                 false
             }
 
@@ -793,8 +818,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
             }.also {
                 if (it) {
                     HIsland.checkOwnerApp()
+                    applyWorkingMode(rememberState, mode, request)
                 }
-            }
+            }.let { false }
 
             mode.startsWith(HailData.PRIVAPP) -> if (!HPackages.isPrivilegedApp(app.packageName)) {
                 HUI.showToast(R.string.permission_denied)
@@ -802,7 +828,8 @@ class SettingsFragment : MainFragment(), MenuProvider {
             }
         }
 
-        return true
+        applyWorkingMode(rememberState, mode, request)
+        return false
     }
 
     private suspend fun onTerminalResult(exitValue: Int, msg: String?) = withContext(Dispatchers.Main) {

@@ -15,8 +15,8 @@ def dump(*args):
 
 badging = dump('badging')
 assert "package: name='com.aistra.hail'" in badging, 'Wrong application ID'
-assert "versionCode='111013'" in badging, 'Unexpected version code'
-assert '1.11.0-enhanced.13-original-package' in badging, 'Missing variant identifier'
+assert "versionCode='111014'" in badging, 'Unexpected version code'
+assert '1.11.0-enhanced.14-original-package' in badging, 'Missing variant identifier'
 xml = dump('xmltree', '--file', 'AndroidManifest.xml')
 for required in ('com.aistra.hail.shizuku', 'com.aistra.hail.action.FREEZE',
                  'com.aistra.hail.action.APPLY_PROFILE'):

@@ -38,6 +38,7 @@ import com.aistra.hail.extensions.paddingRelative
 import com.aistra.hail.ui.main.MainFragment
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,6 +49,21 @@ class HomeFragment : MainFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                childFragmentManager.setFragmentResultListener(TagEditorDialogFragment.RESULT, viewLifecycleOwner) { _, result ->
+                    // Resolve the selected identity from this live adapter, before refreshing its snapshot.
+                    val selectedId = (binding.pager.adapter as? HomeAdapter)?.tagAt(binding.pager.currentItem)?.second ?: 0
+                    refreshTags(selectedId)
+                    refreshAppLists()
+                    if (result.getBoolean(TagEditorDialogFragment.LAUNCHER_WARNING)) {
+                        Toast.makeText(app, R.string.tag_editor_launcher_warning, Toast.LENGTH_LONG).show()
+                    }
+                }
+                try { awaitCancellation() }
+                finally { childFragmentManager.clearFragmentResultListener(TagEditorDialogFragment.RESULT) }
+            }
+        }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 restoreOperations.state.collect { event ->
@@ -109,9 +125,10 @@ class HomeFragment : MainFragment() {
         return binding.root
     }
 
-    fun selectedTagId(): Int = tags.getOrNull(binding.pager.currentItem)?.second ?: 0
+    fun selectedTagId(): Int = (binding.pager.adapter as? HomeAdapter)?.tagAt(binding.pager.currentItem)?.second ?: 0
 
     fun refreshTags(preferredTagId: Int?) {
+        if (AppDataAccess.status.value != com.aistra.hail.app.RecoveryStatus.READY) return
         val pagerAdapter = binding.pager.adapter as? HomeAdapter ?: return
         pagerAdapter.refreshTags()
         pagerAdapter.notifyDataSetChanged()
@@ -389,8 +406,9 @@ class HomeFragment : MainFragment() {
     private fun bindTagLongPress() {
         for (position in 0 until binding.tabs.tabCount) {
             binding.tabs.getTabAt(position)?.view?.setOnLongClickListener {
-                if (isResumed) AppDataAccess.tryAccess { TagEditorDialog(this).show() }.onFailure {
-                    Toast.makeText(app, getString(R.string.operation_failed, com.aistra.hail.utils.HUI.operationError(it)), Toast.LENGTH_LONG).show()
+                if (isResumed && !childFragmentManager.isStateSaved &&
+                    childFragmentManager.findFragmentByTag(TagEditorDialogFragment.TAG) == null) {
+                    TagEditorDialogFragment().show(childFragmentManager, TagEditorDialogFragment.TAG)
                 }
                 true
             }

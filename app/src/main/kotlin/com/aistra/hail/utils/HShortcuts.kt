@@ -139,6 +139,59 @@ object HShortcuts {
         })
     }
 
+    internal fun refreshTagShortcuts(oldName: String, newName: String): Boolean = runCatching {
+        val shortcuts = ShortcutManagerCompat.getShortcuts(app,
+            ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_PINNED)
+        val updates = shortcuts.distinctBy { it.id }.mapNotNull { shortcut ->
+            if (shortcut.intents.none { it.getStringExtra(HailData.KEY_TAG) == oldName }) return@mapNotNull null
+            val intents = shortcut.intents.map { original ->
+                Intent(original).apply {
+                    if (getStringExtra(HailData.KEY_TAG) == oldName) putExtra(HailData.KEY_TAG, newName)
+                }
+            }.toTypedArray()
+            shortcutUpdate(shortcut).setIntents(intents).apply {
+                if (shortcut.intent.action in listOf(HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG)) {
+                    setShortLabel(newName.take(40)); setLongLabel(newName)
+                }
+            }.build()
+        }
+        updates.isEmpty() || ShortcutManagerCompat.updateShortcuts(app, updates)
+    }.getOrElse { HLog.e(it); false }
+
+    internal fun removeTagShortcuts(tagName: String): Boolean = runCatching {
+        val shortcuts = ShortcutManagerCompat.getShortcuts(app,
+            ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_PINNED)
+            .distinctBy { it.id }.filter { shortcut ->
+                shortcut.intents.any { it.getStringExtra(HailData.KEY_TAG) == tagName }
+            }
+        val tagActions = shortcuts.filter { it.intent.action in
+            listOf(HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG) }.map { it.id }
+        if (tagActions.isNotEmpty()) {
+            ShortcutManagerCompat.disableShortcuts(app, tagActions, app.getString(R.string.operation_failed, tagName))
+            ShortcutManagerCompat.removeDynamicShortcuts(app, tagActions)
+            ShortcutManagerCompat.removeLongLivedShortcuts(app, tagActions)
+        }
+        val launches = shortcuts.filterNot { it.id in tagActions }.map { shortcut ->
+            shortcutUpdate(shortcut).setIntents(shortcut.intents.map { original ->
+                Intent(original).apply {
+                    if (getStringExtra(HailData.KEY_TAG) == tagName) removeExtra(HailData.KEY_TAG)
+                }
+            }.toTypedArray()).build()
+        }
+        launches.isEmpty() || ShortcutManagerCompat.updateShortcuts(app, launches)
+    }.getOrElse { HLog.e(it); false }
+
+    /** Public partial-update API; omitted icons remain owned by the existing shortcut. */
+    private fun shortcutUpdate(shortcut: ShortcutInfoCompat): ShortcutInfoCompat.Builder =
+        ShortcutInfoCompat.Builder(app, shortcut.id)
+            .setShortLabel(shortcut.shortLabel)
+            .setRank(shortcut.rank)
+            .apply {
+                shortcut.longLabel?.let { setLongLabel(it) }
+                shortcut.activity?.let { setActivity(it) }
+                shortcut.extras?.let { setExtras(android.os.PersistableBundle(it)) }
+            }
+
     fun removeAllDynamicShortcuts() {
         ShortcutManagerCompat.removeAllDynamicShortcuts(app)
     }

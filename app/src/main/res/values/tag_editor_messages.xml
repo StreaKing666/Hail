@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tag_editor_conflict">Tags or app assignments changed while this editor was open. Your draft was not saved. Close the editor and reopen it to review the latest data.</string>
+    <string name="tag_editor_launcher_warning">Tags were saved, but some launcher shortcuts could not be updated. Recreate the affected shortcuts if they still use an old tag.</string>
+    <string name="tag_editor_other_profile_conflict">A tag you deleted is still used by apps in another Android profile. Your draft was not saved. Keep that tag to preserve the other profile’s assignments.</string>
+</resources>

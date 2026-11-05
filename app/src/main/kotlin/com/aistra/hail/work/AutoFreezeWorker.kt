@@ -8,15 +8,22 @@ import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
+import com.aistra.hail.app.RecoveryBlockedException
+import com.aistra.hail.utils.HPackages
 import com.aistra.hail.services.AutoFreezeService
 import com.aistra.hail.utils.HSystem
 
 class AutoFreezeWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result = try {
         AppDataAccess.access { freezeNow() }
+    } catch (error: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw error
+    } catch (_: RecoveryBlockedException) {
+        if (runAttemptCount < 4) Result.retry() else Result.failure()
     } catch (error: Exception) {
         android.util.Log.e("HailAutoFreeze", "Job failed: " + error.javaClass.simpleName)
-        if (runAttemptCount < 4) Result.retry() else Result.failure()
+        Result.failure()
     }
 
     private fun freezeNow(): Result {
@@ -25,7 +32,8 @@ class AutoFreezeWorker(context: Context, params: WorkerParameters) : Worker(cont
                     && HSystem.isInteractive(applicationContext))
             || isSkipWhileCharging(applicationContext)
         ) return Result.success() // Not stopping the AutoFreezeService here. The worker will run at some point. Then we'll stop the Service
-        val checkedList = HailData.checkedList.filter { !isSkipApp(applicationContext, it) }
+        val checkedList = HailData.checkedList.filter { it.packageName != app.packageName &&
+            it.userId == HPackages.myUserId && !isSkipApp(applicationContext, it) }
         val results = AppManager.executeVerified(checkedList.map { it.packageName }, true)
         val summary = com.aistra.hail.enhanced.domain.FreezeOperationReport.summarize(results)
         return if (summary.incomplete) {

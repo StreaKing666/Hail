@@ -1,5 +1,6 @@
 package com.aistra.hail.ui.home
 
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Typeface
 import android.text.InputType
@@ -10,17 +11,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.aistra.hail.R
-import com.aistra.hail.app.HailData
-import com.aistra.hail.app.TagAssignment
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -32,20 +28,24 @@ import kotlin.math.abs
  * Material bottom sheet: all tag and app changes are staged and written only on Save.
  * Closing this sheet, including Android Back or a swipe, discards every pending change.
  */
-class TagEditorDialog(private val home: HomeFragment) {
-    private val context: Context get() = home.requireContext()
-    private val session = TagEditSession(
-        HailData.tags.toList(),
-        HailData.checkedList.map { TagAssignment(it.packageName, it.tagIdList.toList()) }
-    )
-    private lateinit var sheet: BottomSheetDialog
+internal class TagEditorDialog(
+    private val context: Context,
+    private val session: TagEditSession,
+    private val onSave: () -> Unit,
+    private val onCancel: () -> Unit
+) {
+    private val childDialogs = mutableListOf<Dialog>()
+    private val popupMenus = mutableListOf<PopupMenu>()
+    private var busy = false
+    private lateinit var rootView: View
+    private lateinit var errorView: TextView
     private lateinit var list: RecyclerView
     private lateinit var adapter: TagAdapter
     private lateinit var summary: TextView
     private lateinit var saveButton: MaterialButton
     private lateinit var touchHelper: ItemTouchHelper
 
-    fun show() {
+    fun createView(): View {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(context.dp(20), context.dp(12), context.dp(20), context.dp(16))
@@ -67,7 +67,7 @@ class TagEditorDialog(private val home: HomeFragment) {
         header.addView(headerText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val close = textAction("×", context.getString(android.R.string.cancel)).apply {
             textSize = 28f
-            setOnClickListener { sheet.dismiss() }
+            setOnClickListener { if (!busy) onCancel() }
         }
         header.addView(close, LinearLayout.LayoutParams(context.dp(48), context.dp(48)))
         root.addView(header)
@@ -79,6 +79,11 @@ class TagEditorDialog(private val home: HomeFragment) {
             setPadding(0, context.dp(10), 0, context.dp(10))
         }
         root.addView(hint)
+        errorView = TextView(context).apply {
+            visibility = View.GONE
+            setPadding(0, 0, 0, context.dp(10))
+        }
+        root.addView(errorView)
 
         list = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context)
@@ -95,7 +100,7 @@ class TagEditorDialog(private val home: HomeFragment) {
 
             override fun getMovementFlags(
                 recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder
-            ): Int = if (viewHolder.bindingAdapterPosition <= 0) makeMovementFlags(0, 0)
+            ): Int = if (busy || viewHolder.bindingAdapterPosition <= 0) makeMovementFlags(0, 0)
                 else makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
 
             override fun onMove(
@@ -105,7 +110,7 @@ class TagEditorDialog(private val home: HomeFragment) {
             ): Boolean {
                 val from = viewHolder.bindingAdapterPosition
                 val to = target.bindingAdapterPosition
-                if (!session.move(from, to)) return false
+                if (busy || !session.move(from, to)) return false
                 adapter.notifyItemMoved(from, to)
                 adapter.notifyItemRangeChanged(minOf(from, to), abs(from - to) + 1)
                 refreshSummary()
@@ -150,14 +155,30 @@ class TagEditorDialog(private val home: HomeFragment) {
         )
         root.addView(footer)
 
-        sheet = BottomSheetDialog(context)
-        sheet.setContentView(root)
-        sheet.setOnShowListener {
-            sheet.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
-                ?.let { BottomSheetBehavior.from(it).state = BottomSheetBehavior.STATE_EXPANDED }
-        }
+        rootView = root
         refreshSummary()
-        sheet.show()
+        return root
+    }
+
+    fun setStatus(busy: Boolean, error: String?) {
+        this.busy = busy
+        fun enable(view: View) {
+            view.isEnabled = !busy && !(view is AccessibleActionTextView && view.tag == true)
+            if (view is ViewGroup) for (index in 0 until view.childCount) enable(view.getChildAt(index))
+        }
+        enable(rootView)
+        errorView.text = error
+        errorView.visibility = if (error == null) View.GONE else View.VISIBLE
+        refreshSummary()
+    }
+
+    fun dispose() {
+        childDialogs.toList().forEach { it.dismiss() }
+        childDialogs.clear()
+        popupMenus.forEach { it.dismiss() }
+        popupMenus.clear()
+        touchHelper.attachToRecyclerView(null)
+        list.adapter = null
     }
 
     private fun refreshSummary() {
@@ -165,18 +186,20 @@ class TagEditorDialog(private val home: HomeFragment) {
         summary.text = context.getString(
             R.string.tag_editor_v2_summary, session.tags.size, appCount
         ) + if (session.isDirty) " • " + context.getString(R.string.tag_editor_v2_pending) else ""
-        saveButton.isEnabled = session.isDirty
+        saveButton.isEnabled = session.isDirty && !busy
     }
 
     private fun manageApps(tagId: Int) {
+        if (busy) return
         val tag = session.tags.firstOrNull { it.second == tagId } ?: return
         TagAppManagerDialog(context, session, tag) {
             adapter.notifyDataSetChanged()
             refreshSummary()
-        }.show()
+        }.show()?.let { childDialogs.add(it) }
     }
 
     private fun promptTagName(tagId: Int?) {
+        if (busy) return
         val old = tagId?.let { id -> session.tags.firstOrNull { it.second == id } }
         val input = TextInputEditText(context).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
@@ -218,10 +241,12 @@ class TagEditorDialog(private val home: HomeFragment) {
                 dialog.dismiss()
             }
         }
+        childDialogs.add(dialog)
         dialog.show()
     }
 
     private fun confirmDelete(tagId: Int) {
+        if (busy) return
         val tag = session.tags.firstOrNull { it.second == tagId } ?: return
         if (tagId == 0) return
         MaterialAlertDialogBuilder(context)
@@ -234,10 +259,11 @@ class TagEditorDialog(private val home: HomeFragment) {
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .show().also { childDialogs.add(it) }
     }
 
     private fun actionMenu(anchor: View, tagId: Int) {
+        if (busy) return
         val index = session.tags.indexOfFirst { it.second == tagId }
         if (index < 0) return
         val popup = PopupMenu(context, anchor)
@@ -265,64 +291,13 @@ class TagEditorDialog(private val home: HomeFragment) {
             }
             true
         }
+        popupMenus.add(popup)
         popup.show()
     }
 
     private fun save() {
-        if (!session.isDirty) {
-            sheet.dismiss()
-            return
-        }
-        // Capture identity before mutating the global tab order; the selected index may move.
-        try {
-            com.aistra.hail.app.AppDataAccess.access { saveChanges() }
-        } catch (error: Exception) {
-            com.aistra.hail.utils.HUI.showToast(com.aistra.hail.R.string.operation_failed, com.aistra.hail.utils.HUI.operationError(error), true)
-        }
-    }
-
-    private fun saveChanges() {
-        val chosenId = home.selectedTagId()
-        val prevTags = HailData.tags.toList()
-        val prevApps = HailData.checkedList.toList()
-        val prevAssignments = prevApps.associate { it.packageName to it.tagIdList.toList() }
-        val nextAssignments = session.allAssignments()
-        val newlyUnassigned = session.newlyUnassignedPackages()
-        try {
-            HailData.tags.clear()
-            HailData.tags.addAll(session.tags)
-            HailData.checkedList.forEach { app ->
-                // A package added while this sheet was open is not part of the edit session.
-                // Preserve its existing assignment rather than silently removing it.
-                val editedTags = nextAssignments[app.packageName] ?: return@forEach
-                app.tagIdList.clear()
-                app.tagIdList.addAll(editedTags)
-            }
-            // Remove only apps orphaned by this edit, never preexisting/unrelated records.
-            HailData.checkedList.removeAll { it.packageName in newlyUnassigned }
-            HailData.saveTags()
-            HailData.saveApps()
-        } catch (error: Exception) {
-            HailData.tags.clear()
-            HailData.tags.addAll(prevTags)
-            HailData.checkedList.clear()
-            HailData.checkedList.addAll(prevApps)
-            prevApps.forEach { app ->
-                app.tagIdList.clear()
-                app.tagIdList.addAll(prevAssignments[app.packageName].orEmpty())
-            }
-            runCatching { HailData.saveTags(); HailData.saveApps() }
-            Toast.makeText(
-                context,
-                context.getString(
-                    R.string.tag_backup_error, error.message ?: error.javaClass.simpleName
-                ), Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-        home.refreshTags(if (session.tags.any { it.second == chosenId }) chosenId else 0)
-        home.refreshAppLists()
-        sheet.dismiss()
+        if (busy) return
+        if (!session.isDirty) onCancel() else onSave()
     }
 
     private inner class TagAdapter : RecyclerView.Adapter<TagHolder>() {
@@ -382,7 +357,8 @@ class TagEditorDialog(private val home: HomeFragment) {
             holder.handle.contentDescription = context.getString(
                 if (fixed) R.string.tag_default_locked else R.string.tag_drag
             )
-            holder.handle.isEnabled = !fixed
+            holder.handle.tag = fixed
+            holder.handle.isEnabled = !fixed && !busy
             holder.handle.alpha = if (fixed) .45f else 1f
             holder.handle.setOnClickListener { actionMenu(holder.handle, tag.second) }
             var touchX = 0f
@@ -396,11 +372,14 @@ class TagEditorDialog(private val home: HomeFragment) {
                     (kotlin.math.abs(event.x - touchX) + kotlin.math.abs(event.y - touchY)) >
                     android.view.ViewConfiguration.get(context).scaledTouchSlop) moved = true
                 if (event.actionMasked == MotionEvent.ACTION_UP && !moved) handle.performClick()
-                if (!fixed && event.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (!busy && !fixed && event.actionMasked == MotionEvent.ACTION_DOWN) {
                     touchHelper.startDrag(holder)
                     true
                 } else false
             }
+            holder.itemView.isEnabled = !busy
+            holder.handle.isEnabled = !fixed && !busy
+            holder.more.isEnabled = !busy
             holder.itemView.setOnClickListener { manageApps(tag.second) }
             holder.more.setOnClickListener { actionMenu(holder.more, tag.second) }
         }

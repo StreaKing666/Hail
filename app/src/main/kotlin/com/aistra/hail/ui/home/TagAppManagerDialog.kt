@@ -1,5 +1,6 @@
 package com.aistra.hail.ui.home
 
+import android.app.Dialog
 import android.content.Context
 import android.text.Editable
 import android.text.TextWatcher
@@ -18,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailData
+import com.aistra.hail.utils.HPackages
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -45,14 +47,13 @@ internal class TagAppManagerDialog(
     private lateinit var moveButton: MaterialButton
     private lateinit var adapter: AppAdapter
 
-    fun show() {
+    fun show(): Dialog? {
         if (sourceTags.isEmpty()) {
-            MaterialAlertDialogBuilder(context)
+            return MaterialAlertDialogBuilder(context)
                 .setTitle(R.string.tag_manage_apps)
                 .setMessage(R.string.tag_apps_no_source_categories)
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
-            return
         }
 
         val content = LinearLayout(context).apply {
@@ -215,6 +216,7 @@ internal class TagAppManagerDialog(
 
         dialog.show()
         refreshApps()
+        return dialog
     }
 
     private fun currentSourceTag(): Pair<String, Int>? =
@@ -224,7 +226,7 @@ internal class TagAppManagerDialog(
         val sourceId = currentSourceTag()?.second ?: return
         val query = searchInput.text?.toString()?.trim().orEmpty()
         val sourceApps = HailData.checkedList
-            .filter { sourceId in session.tagsFor(it.packageName) }
+            .filter { it.userId == HPackages.myUserId && sourceId in session.tagsFor(it.packageName) }
             .sortedBy { it.name.toString().lowercase() }
         visibleApps = sourceApps.filter { app ->
             query.isEmpty() ||
@@ -250,7 +252,7 @@ internal class TagAppManagerDialog(
         val sourceId = currentSourceTag()?.second
         val eligibleSelected = if (sourceId == null) 0 else selectedPackages.count { packageName ->
             HailData.checkedList.any {
-                it.packageName == packageName && sourceId in session.tagsFor(it.packageName)
+                it.userId == HPackages.myUserId && it.packageName == packageName && sourceId in session.tagsFor(it.packageName)
             }
         }
         selectedCount.text = context.getString(R.string.tag_selected_count, eligibleSelected)

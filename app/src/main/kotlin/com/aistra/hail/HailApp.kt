@@ -42,6 +42,7 @@ class HailApp : Application() {
                 AppDataAccess.recover {
                     FullBackupStorage.recoverInterruptedRestore()
                     AppManager.recoverPendingFreezeOperations()
+                    HailData.validateLoadedState()
                 }
             } catch (error: Exception) {
                 // No user data, commands, paths or exception messages in the diagnostic.

@@ -1,25 +1,31 @@
 package com.aistra.hail.ui.home
 
 import android.util.TypedValue
+import android.text.TextUtils
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailData
+import com.aistra.hail.app.FreezePresentationPolicy
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages.myUserId
 import com.google.android.material.color.MaterialColors
+import com.google.android.material.textview.MaterialTextView
 import kotlinx.coroutines.Job
+import java.util.concurrent.ConcurrentHashMap
 
 class PagerAdapter(
     private val selectedList: List<AppInfo>,
-    private val flags: MutableMap<String, Int> = mutableMapOf()
+    private val flags: MutableMap<String, Int> = ConcurrentHashMap()
 ) : ListAdapter<AppInfo, PagerAdapter.ViewHolder>(HomeDiff(selectedList, flags)) {
     private var loadIconJob: Job? = null
     lateinit var onItemClickListener: OnItemClickListener
@@ -31,18 +37,21 @@ class PagerAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val info = currentList[position]
-        flags[info.packageName] = info.getFlag(selectedList)
+        val applicationInfo = info.applicationInfo
+        val state = info.stateFor(applicationInfo)
+        flags[info.presentationKey] = info.getFlag(selectedList, state)
+        holder.stateHint.isVisible = state == AppInfo.State.UNKNOWN
         holder.itemView.run {
             setOnClickListener { onItemClickListener.onItemClick(info) }
             setOnLongClickListener { onItemLongClickListener.onItemLongClick(info) }
             findViewById<ImageView>(R.id.app_icon).run {
-                info.applicationInfo?.let {
+                applicationInfo?.let {
                     loadIconJob = AppIconCache.loadIconBitmapAsync(
                         context,
                         it,
                         myUserId,
                         this,
-                        HailData.grayscaleIcon && info.state == AppInfo.State.FROZEN
+                        HailData.grayscaleIcon && state == AppInfo.State.FROZEN
                     )
                 } ?: run {
                     setImageDrawable(context.packageManager.defaultActivityIcon)
@@ -51,17 +60,17 @@ class PagerAdapter(
             }
             findViewById<TextView>(R.id.app_name).run {
                 text = buildString {
-                    if (!HailData.grayscaleIcon && info.state == AppInfo.State.FROZEN) append("\u2744\uFE0F")
+                    if (!HailData.grayscaleIcon && state == AppInfo.State.FROZEN) append("\u2744\uFE0F")
                     if (info.whitelisted) append("\uD83D\uDD12")
-                    append(info.name)
+                    append(applicationInfo?.loadLabel(context.packageManager) ?: info.packageName)
                 }
-                isEnabled = !HailData.grayscaleIcon || info.state != AppInfo.State.FROZEN
+                isEnabled = !HailData.grayscaleIcon || state != AppInfo.State.FROZEN
                 when {
                     info in selectedList -> setTextColor(
                         MaterialColors.getColor(this, androidx.appcompat.R.attr.colorPrimary)
                     )
 
-                    info.state == AppInfo.State.NOT_FOUND -> setTextColor(
+                    state == AppInfo.State.NOT_FOUND -> setTextColor(
                         MaterialColors.getColor(this, androidx.appcompat.R.attr.colorError)
                     )
 
@@ -82,10 +91,24 @@ class PagerAdapter(
         override fun areItemsTheSame(oldItem: AppInfo, newItem: AppInfo): Boolean = oldItem == newItem
 
         override fun areContentsTheSame(oldItem: AppInfo, newItem: AppInfo): Boolean =
-            flags[oldItem.packageName] == newItem.getFlag(selectedList)
+            flags[oldItem.presentationKey] == newItem.getFlag(selectedList)
     }
 
-    class ViewHolder(view: View) : RecyclerView.ViewHolder(view)
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val stateHint = MaterialTextView(view.context).apply {
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+            setText(R.string.state_unverified)
+            gravity = Gravity.CENTER_HORIZONTAL
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            isVisible = false
+        }
+
+        init {
+            (view as ViewGroup).addView(stateHint, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+    }
 
     interface OnItemClickListener {
         fun onItemClick(info: AppInfo)
@@ -96,7 +119,8 @@ class PagerAdapter(
     }
 }
 
-private fun AppInfo.getFlag(selectedList: List<AppInfo>) =
-    (1 shl state.ordinal) or (this in selectedList).shl(3) or whitelisted.shl(4)
+private val AppInfo.presentationKey get() = "$userId:$packageName"
 
-private fun Boolean.shl(bitCount: Int) = if (this) 1 shl bitCount else 0
+private fun AppInfo.getFlag(selectedList: List<AppInfo>, observedState: AppInfo.State = state): Int =
+    FreezePresentationPolicy.flags(FreezePresentationPolicy.State.valueOf(observedState.name),
+        this in selectedList, whitelisted)

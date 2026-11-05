@@ -6,6 +6,7 @@ import android.widget.ProgressBar
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
+import androidx.activity.viewModels
 import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.app.RecoveryStatus
 import com.aistra.hail.app.RecoveryUiPolicy
@@ -41,6 +42,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedListener {
+    private val ownerOperations: ManualOperationsViewModel by viewModels()
     private var recoveryDialog: androidx.appcompat.app.AlertDialog? = null
     private var recoveryDialogState: RecoveryStatus? = null
     lateinit var fab: ExtendedFloatingActionButton
@@ -50,6 +52,21 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                ownerOperations.state.collect { event ->
+                    event.error?.let {
+                        ownerOperations.consume(event.id)
+                        HUI.showToast(R.string.operation_failed, it, true)
+                    }
+                    event.result?.let {
+                        ownerOperations.consume(event.id)
+                        invalidateOptionsMenu()
+                        HailApp.app.setAutoFreezeService()
+                    }
+                }
+            }
+        }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         // FragmentManager must always find restored NavHost/DialogFragment containers,
         // including process recreation while journal recovery is still running.
@@ -75,7 +92,8 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
                                 recoveryDialogState = state
                                 recoveryDialog = MaterialAlertDialogBuilder(this@MainActivity)
                                     .setTitle(R.string.recovery_failed_title)
-                                    .setMessage(R.string.recovery_failed_message)
+                                    .setMessage(listOfNotNull(getString(R.string.recovery_failed_message),
+                                        AppDataAccess.recoveryFailure).joinToString("\n\n"))
                                     .setCancelable(false)
                                     .setPositiveButton(R.string.recovery_retry) { _, _ ->
                                         (application as HailApp).retryRecovery()
@@ -178,8 +196,21 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
     fun ownerRemoveDialog() {
         MaterialAlertDialogBuilder(this).setTitle(R.string.title_remove_owner).setMessage(R.string.msg_remove_owner)
             .setPositiveButton(R.string.action_continue) { _, _ ->
-                HPolicy.setOrganizationName()
-                HPolicy.removeDeviceOwner()
+                ownerOperations.run {
+                    if (HPolicy.isDeviceOwnerActive) {
+                        HPolicy.setOrganizationName()
+                        HPolicy.removeDeviceOwner()
+                    }
+                    check(!HPolicy.isDeviceOwnerActive) { HailApp.app.getString(R.string.operation_failed,
+                        HailApp.app.getString(R.string.title_remove_owner)) }
+                    if (HailData.workingMode.startsWith(HailData.OWNER)) {
+                        check(androidx.preference.PreferenceManager.getDefaultSharedPreferences(HailApp.app).edit()
+                            .putString(HailData.WORKING_MODE, HailData.MODE_DEFAULT).commit()) {
+                            HailApp.app.getString(R.string.operation_failed, HailApp.app.getString(R.string.working_mode))
+                        }
+                    }
+                    ManualResult()
+                }
             }.setNegativeButton(android.R.string.cancel, null).show()
     }
 

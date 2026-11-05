@@ -10,7 +10,8 @@ internal object BackupFileReader {
     private const val MAX_FILES = 254
     private val required = setOf("v1/tags.json", "v1/apps.json")
 
-    fun read(rootDirectory: File, selection: FullBackupSelection = FullBackupSelection()): List<FullBackupFile> {
+    fun read(rootDirectory: File, selection: FullBackupSelection = FullBackupSelection(),
+             requireStateFiles: Boolean = true): List<FullBackupFile> {
         val root = rootDirectory.canonicalFile
         val selected = mutableListOf<Pair<String, File>>()
         var declaredTotal = 0L
@@ -30,7 +31,7 @@ internal object BackupFileReader {
             require(declaredTotal <= MAX_TOTAL) { "App data is too large to back up" }
             selected += relative to canonical
         }
-        require(selected.map { it.first }.containsAll(required)) { "Hail app data is incomplete" }
+        require(!requireStateFiles || selected.map { it.first }.containsAll(required)) { "Hail app data is incomplete" }
         var actualTotal = 0L
         return selected.map { (path, file) ->
             val bytes = file.inputStream().use { input ->

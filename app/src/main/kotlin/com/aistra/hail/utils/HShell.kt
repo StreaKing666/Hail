@@ -27,16 +27,30 @@ object HShell {
 
     val lockScreen get() = execSU("input keyevent KEYCODE_POWER").first == 0
 
-    fun forceStopApp(packageName: String): Boolean = execSU("am force-stop $userArg $packageName").first == 0
+    internal fun changeFrozenState(method: String, packageName: String, frozen: Boolean): Pair<Int, String?> {
+        val command = when (method) {
+            "stop" -> {
+                require(frozen) { "Force-stop cannot be undone without launching the app" }
+                "am force-stop $userArg $packageName"
+            }
+            "disable" -> "pm ${if (frozen) "disable" else "enable"} $userArg $packageName"
+            "hide" -> "pm ${if (frozen) "hide" else "unhide"} $userArg $packageName"
+            "suspend" -> "pm ${if (frozen) "suspend" else "unsuspend"} $userArg $packageName"
+            else -> error("Unsupported freeze method")
+        }
+        return execSU(command)
+    }
+
+    fun forceStopApp(packageName: String): Boolean = changeFrozenState("stop", packageName, true).first == 0
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean =
-        execSU("pm ${if (disabled) "disable" else "enable"} $userArg $packageName").first == 0
+        changeFrozenState("disable", packageName, disabled).first == 0
 
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
-        execSU("pm ${if (hidden) "hide" else "unhide"} $userArg $packageName").first == 0
+        changeFrozenState("hide", packageName, hidden).first == 0
 
     fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
-        execSU("pm ${if (suspended) "suspend" else "unsuspend"} $userArg $packageName").first == 0
+        changeFrozenState("suspend", packageName, suspended).first == 0
 
     fun uninstallApp(packageName: String): Boolean =
         execSU(UserScopedCommands.uninstall(packageName, getCurrentUserId())).first == 0

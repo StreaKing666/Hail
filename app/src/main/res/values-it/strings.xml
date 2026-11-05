@@ -77,16 +77,16 @@
     <string name="msg_imported">Importato: %s</string>
     <string name="msg_text_copied">Copiato: %s</string>
     <string name="msg_extract_apk">Estratto in: %s</string>
-    <string name="msg_freeze">Congela: %s</string>
-    <string name="msg_unfreeze">Sgela: %s</string>
+    <string name="msg_freeze">Congelato: %s</string>
+    <string name="msg_unfreeze">Scongelato: %s</string>
     <plurals name="deferred_task_entry">
-        <item quantity="one">%d minute</item>
-        <item quantity="many">%d minutes</item>
-        <item quantity="other">%d minutes</item>
+        <item quantity="one">%d minuto</item>
+        <item quantity="many">%d minuti</item>
+        <item quantity="other">%d minuti</item>
     </plurals>
     <plurals name="msg_deferred_task">
         <item quantity="one">%2$s dopo %1$d minuto: %3$s</item>
-        <item quantity="many">%2$s dopo %1$d di minuti: %3$s</item>
+        <item quantity="many">%2$s dopo %1$d minuti: %3$s</item>
         <item quantity="other">%2$s dopo %1$d minuti: %3$s</item>
     </plurals>
     <string name="action_clear_dynamic_shortcuts">Cancella tutti i collegamenti dinamici</string>

@@ -1,5 +1,6 @@
 package com.aistra.hail.utils
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.AppOpsManager
 import android.content.pm.ApplicationInfo
@@ -9,6 +10,16 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.getSystemService
 import com.aistra.hail.HailApp.Companion.app
 import org.lsposed.hiddenapibypass.HiddenApiBypass
+import java.lang.reflect.Field
+import java.lang.reflect.InvocationTargetException
+import java.util.concurrent.CancellationException
+
+data class PackageFreezeState(
+    val disabled: Boolean,
+    val hidden: Boolean?,
+    val suspended: Boolean,
+    val stopped: Boolean
+)
 
 object HPackages {
     val myUserId get() = android.os.Process.myUid() / 100_000
@@ -35,69 +46,121 @@ object HPackages {
         else app.packageManager.getPackageInfo(packageName, PackageManager.GET_UNINSTALLED_PACKAGES)
     }.getOrNull()
 
-    fun getApplicationInfoOrNull(
-        packageName: String
-    ) = runCatching {
+    private fun getApplicationInfo(packageName: String): ApplicationInfo =
         if (HTarget.T) app.packageManager.getApplicationInfo(
             packageName, PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
         )
         else app.packageManager.getApplicationInfo(packageName, PackageManager.GET_UNINSTALLED_PACKAGES)
-    }.getOrNull()
+
+    fun getApplicationInfoOrNull(packageName: String): ApplicationInfo? =
+        runCatching { getApplicationInfo(packageName) }.getOrNull()
+
+    /** One package-manager observation; unavailable private flags remain unknown. */
+    fun getFreezeState(packageName: String): PackageFreezeState? =
+        getApplicationInfoOrNull(packageName)?.let(::getFreezeState)
+
+    fun getFreezeState(info: ApplicationInfo): PackageFreezeState = PackageFreezeState(
+        disabled = !info.enabled,
+        hidden = isAppHidden(info),
+        suspended = isAppSuspended(info),
+        stopped = info.flags and ApplicationInfo.FLAG_STOPPED != 0
+    )
+
+    private val privateFlagsField: Field? by lazy { findPrivateFlagsField(false) }
+    private val bypassPrivateFlagsField: Field? by lazy { findPrivateFlagsField(true) }
+
+    @SuppressLint("PrivateApi")
+    private fun findPrivateFlagsField(bypass: Boolean): Field? = try {
+        val field = if (bypass) {
+            if (HTarget.P) HiddenApiBypass.getInstanceFields(ApplicationInfo::class.java)
+                .firstOrNull { it.name == "privateFlags" } else null
+        } else ApplicationInfo::class.java.getDeclaredField("privateFlags")
+        field?.apply { isAccessible = true }
+    } catch (_: ReflectiveOperationException) {
+        null
+    } catch (_: RuntimeException) {
+        null
+    } catch (_: LinkageError) {
+        // A platform that cannot initialize the optional bypass still supports public flags.
+        null
+    }
+
+    private fun readPrivateFlags(field: Field?, info: ApplicationInfo): Int? = try {
+        field?.getInt(info)
+    } catch (_: ReflectiveOperationException) {
+        null
+    } catch (_: RuntimeException) {
+        null
+    }
+
+    fun privateFlagsOrNull(info: ApplicationInfo): Int? =
+        readPrivateFlags(privateFlagsField, info) ?: readPrivateFlags(bypassPrivateFlagsField, info)
+
+    fun isAppHidden(info: ApplicationInfo): Boolean? = privateFlagsOrNull(info)?.let { it and 1 != 0 }
+
+    fun isAppSuspended(info: ApplicationInfo): Boolean =
+        HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0
 
     fun isAppDisabled(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.enabled?.not() ?: false
 
-    fun isAppHidden(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        (ApplicationInfo::class.java.getField("privateFlags").get(it) as Int) and 1 == 1
-    } ?: false
+    fun isAppHidden(packageName: String): Boolean =
+        getApplicationInfoOrNull(packageName)?.let(::isAppHidden) == true
 
     fun isAppStopped(packageName: String): Boolean =
-        getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_STOPPED == ApplicationInfo.FLAG_STOPPED }
-            ?: false
+        getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_STOPPED != 0 } ?: false
 
-    fun isAppSuspended(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        when {
-//            This method will cause NameNotFoundException with uninstalled packages
-//            HTarget.Q -> app.packageManager.isPackageSuspended(packageName)
-            HTarget.N -> it.flags and ApplicationInfo.FLAG_SUSPENDED == ApplicationInfo.FLAG_SUSPENDED
-            else -> false
-        }
-    } ?: false
+    fun isAppSuspended(packageName: String): Boolean =
+        getApplicationInfoOrNull(packageName)?.let(::isAppSuspended) == true
 
     fun isAppUninstalled(packageName: String): Boolean =
-        getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_INSTALLED != ApplicationInfo.FLAG_INSTALLED }
-            ?: true
+        getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_INSTALLED == 0 } ?: true
 
-    fun isPrivilegedApp(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        (ApplicationInfo::class.java.getField("privateFlags").get(it) as Int) and 8 == 8
-    } ?: false
+    fun isPrivilegedApp(packageName: String): Boolean =
+        getApplicationInfoOrNull(packageName)?.let(::privateFlagsOrNull)?.let { it and 8 != 0 } == true
 
     fun canUninstallNormally(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.sourceDir?.startsWith("/data") ?: false
 
-    fun forceStopApp(packageName: String): Boolean = runCatching {
-        app.getSystemService<ActivityManager>()!!.let {
-            if (HTarget.P) HiddenApiBypass.invoke(it::class.java, it, "forceStopPackage", packageName)
-            else it::class.java.getMethod("forceStopPackage", String::class.java).invoke(it, packageName)
-        }
+    fun forceStopAppResult(packageName: String): Result<Boolean> = privilegedCommand {
+        val manager = checkNotNull(app.getSystemService<ActivityManager>()) { "Activity manager unavailable" }
+        if (HTarget.P) HiddenApiBypass.invoke(manager::class.java, manager, "forceStopPackage", packageName)
+        else manager::class.java.getMethod("forceStopPackage", String::class.java).invoke(manager, packageName)
         true
-    }.getOrElse {
+    }
+
+    fun forceStopApp(packageName: String): Boolean = forceStopAppResult(packageName).getOrElse {
         HLog.e(it)
         false
     }
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        getApplicationInfoOrNull(packageName) ?: return false
+    fun setAppDisabledResult(packageName: String, disabled: Boolean): Result<Boolean> = privilegedCommand {
+        getApplicationInfo(packageName)
         if (disabled) forceStopApp(packageName)
-        runCatching {
-            val newState = when {
-                !disabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            }
-            app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-        }.onFailure {
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
+        !getApplicationInfo(packageName).enabled == disabled
+    }
+
+    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean =
+        setAppDisabledResult(packageName, disabled).getOrElse {
             HLog.e(it)
+            false
         }
-        return isAppDisabled(packageName) == disabled
+
+    private inline fun privilegedCommand(command: () -> Boolean): Result<Boolean> = try {
+        Result.success(command())
+    } catch (error: Exception) {
+        // Reflection wraps the platform's SecurityException; retain the actual permission error.
+        val cause = (error as? InvocationTargetException)?.targetException ?: error
+        when (cause) {
+            is InterruptedException -> {
+                Thread.currentThread().interrupt()
+                throw cause
+            }
+            is CancellationException -> throw cause
+            else -> Result.failure(cause)
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

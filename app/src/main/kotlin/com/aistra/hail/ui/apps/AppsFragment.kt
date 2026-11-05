@@ -1,6 +1,7 @@
 package com.aistra.hail.ui.apps
 
 import android.os.Bundle
+import android.net.Uri
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
@@ -17,6 +18,7 @@ import androidx.core.view.MenuProvider
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.R
@@ -25,21 +27,22 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.FragmentAppsBinding
 import com.aistra.hail.extensions.*
 import com.aistra.hail.ui.main.MainFragment
-import com.aistra.hail.utils.HFiles
+import com.aistra.hail.ui.main.ManualOperationsViewModel
+import com.aistra.hail.ui.main.ManualResult
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HPolicy
 import com.aistra.hail.utils.HUI
 import com.aistra.hail.views.HRecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.FileInputStream
+import java.io.IOException
 
 class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapter.OnItemCheckedChangeListener,
     MenuProvider {
 
     private val model: AppsViewModel by viewModels()
+    private val manualOperations: ManualOperationsViewModel by viewModels()
 
     private var _binding: FragmentAppsBinding? = null
     private val binding get() = _binding!!
@@ -63,30 +66,21 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private var exportApkPkg: String? = null
     private val exportApk =
         registerForActivityResult(CreateDocument("application/vnd.android.package-archive")) { uri ->
-            val exportApkPkg = exportApkPkg
-            this.exportApkPkg = null
-            if (exportApkPkg == null || uri == null) return@registerForActivityResult
-            lifecycleScope.launch {
-                val applicationInfo = HPackages.getApplicationInfoOrNull(exportApkPkg) ?: return@launch
-                val dialog =
-                    MaterialAlertDialogBuilder(activity).setView(R.layout.dialog_progress).setCancelable(false).show()
-                runCatching {
-                    withContext(Dispatchers.IO) {
-                        FileInputStream(applicationInfo.sourceDir).use { source ->
-                            activity.contentResolver.openOutputStream(uri, "rwt").use { target ->
-                                if (target == null) return@withContext
-                                HFiles.copy(source, target)
-                            }
-                        }
-                    }
-                }.onSuccess {
-                    HUI.showToast(R.string.msg_extract_apk, uri.toString())
-                }.onFailure {
-                    HUI.showToast(R.string.operation_failed, it.localizedMessage ?: "Unknown", true)
-                }
-                dialog.dismiss()
-            }
+            val pkg = exportApkPkg
+            exportApkPkg = null
+            if (pkg == null || uri == null) return@registerForActivityResult
+            manualOperations.run { copyApk(pkg, uri) }
         }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        exportApkPkg = savedInstanceState?.getString("exportApkPkg")
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("exportApkPkg", exportApkPkg)
+        super.onSaveInstanceState(outState)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -128,10 +122,46 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             }
         }
         model.displayApps.observe(viewLifecycleOwner) {
-            appsAdapter.submitList(it)
+            appsAdapter.submitList(
+                if (com.aistra.hail.app.AppDataAccess.status.value == com.aistra.hail.app.RecoveryStatus.READY)
+                    it else emptyList()
+            )
+        }
+        model.error.observe(viewLifecycleOwner) { error ->
+            if (error != null) {
+                model.clearError()
+                HUI.showToast(R.string.operation_failed, error, true)
+            }
         }
 
         return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                manualOperations.state.collect { event ->
+                    event.error?.let {
+                        manualOperations.consume(event.id)
+                        HUI.showToast(R.string.operation_failed, it, true)
+                        refreshCheckedState()
+                        updateAppList()
+                    }
+                    event.result?.let { result ->
+                        manualOperations.consume(event.id)
+                        runCatching {
+                            result.intent?.let(::startActivity)
+                            if (result.messageRes != 0) HUI.showToast(result.messageRes, result.value ?: "")
+                            if (result.refresh) {
+                                refreshCheckedState()
+                                updateAppList()
+                            }
+                        }.onFailure { HUI.showToast(R.string.operation_failed, HUI.operationError(it), true) }
+                    }
+                }
+            }
+        }
     }
 
     override fun onStart() {
@@ -166,6 +196,9 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     override fun onResume() {
         super.onResume()
         (binding.recyclerView.layoutManager as? GridLayoutManager)?.spanCount = HailData.appListSpanCount
+        if (com.aistra.hail.app.AppDataAccess.status.value == com.aistra.hail.app.RecoveryStatus.READY) {
+            updateDisplayAppList()
+        }
         model.updateAppList()
     }
 
@@ -202,8 +235,11 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.action_extract_apk -> extractApk(pkg)
             R.id.action_uninstall -> uninstallApp(name, pkg)
             R.id.action_reinstall -> {
-                if (AppManager.reinstallApp(pkg)) updateAppList()
-                else HUI.showToast(R.string.operation_failed, name)
+                val appName = name.toString()
+                manualOperations.run {
+                    if (AppManager.reinstallApp(pkg)) ManualResult()
+                    else ManualResult(R.string.operation_failed, appName, refresh = false)
+                }
             }
 
             else -> return super.onContextItemSelected(item)
@@ -218,37 +254,70 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
     private fun uninstallApp(name: CharSequence, pkg: String) {
         when {
-            HPackages.isAppUninstalled(pkg) -> HUI.showToast(R.string.app_not_installed)
-
             pkg == app.packageName -> {
                 when {
-                    HPolicy.isDeviceOwnerActive -> activity.ownerRemoveDialog()
-                    HPolicy.isProfileOwner -> HPolicy.removeProfileOwner()
-                    HPolicy.isAdminActive -> HPolicy.removeActiveAdmin()
+                    HPolicy.isDeviceOwnerActive -> showOwnerRemoveDialog()
+                    HPolicy.isProfileOwner -> manualOperations.run { HPolicy.removeProfileOwner(); ManualResult() }
+                    HPolicy.isAdminActive -> manualOperations.run { HPolicy.removeActiveAdmin(); ManualResult() }
                     else -> showUninstallDialog(name, pkg)
                 }
             }
 
-            HailData.workingMode == HailData.MODE_DEFAULT -> AppManager.uninstallApp(pkg)
+            HailData.workingMode == HailData.MODE_DEFAULT -> startActivity(uninstallIntent(pkg))
             else -> showUninstallDialog(name, pkg)
         }
     }
 
+    private fun showOwnerRemoveDialog() = activity.ownerRemoveDialog()
+
     private fun showUninstallDialog(name: CharSequence, pkg: String) {
         MaterialAlertDialogBuilder(activity).setTitle(name).setMessage(R.string.msg_uninstall)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                if (AppManager.uninstallApp(pkg)) updateAppList()
+                manualOperations.run {
+                    if (HPackages.isAppUninstalled(pkg)) ManualResult(R.string.app_not_installed, refresh = false)
+                    else if (AppManager.uninstallApp(pkg)) ManualResult()
+                    else ManualResult(intent = uninstallIntent(pkg), refresh = false)
+                }
             }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private companion object {
+        fun uninstallIntent(pkg: String) = Intent(Intent.ACTION_DELETE, Uri.parse(HPackages.packageUri(pkg)))
+
+        fun copyApk(pkg: String, uri: Uri): ManualResult {
+            val info = HPackages.getApplicationInfoOrNull(pkg)
+                ?: throw IOException(app.getString(R.string.app_not_installed))
+            FileInputStream(info.sourceDir).use { source ->
+                val target = app.contentResolver.openOutputStream(uri, "rwt")
+                    ?: throw IOException("Could not open the APK export destination")
+                target.use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        if (Thread.currentThread().isInterrupted) throw InterruptedException("APK export cancelled")
+                        val read = source.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                    }
+                    output.flush()
+                }
+            }
+            return ManualResult(R.string.msg_extract_apk, uri.toString(), refresh = false)
+        }
     }
 
     override fun onItemCheckedChange(
         buttonView: CompoundButton, isChecked: Boolean, packageName: String
     ) {
-        com.aistra.hail.app.AppDataAccess.tryAccess {
+        val accepted = manualOperations.runData {
             if (isChecked) HailData.addCheckedApp(packageName)
             else HailData.removeCheckedApp(packageName)
-        }.onFailure { HUI.showToast(R.string.operation_failed, HUI.operationError(it), true) }
-        buttonView.isChecked = HailData.isChecked(packageName)
+            ManualResult()
+        }
+        if (!accepted) refreshCheckedState()
+    }
+
+    private fun refreshCheckedState() {
+        appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount)
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
@@ -337,7 +406,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     }
 
     private fun updateAppList() = model.updateAppList()
-    private fun updateDisplayAppList() = model.updateDisplayAppList()
+    private fun updateDisplayAppList() {
+        if (com.aistra.hail.app.AppDataAccess.status.value == com.aistra.hail.app.RecoveryStatus.READY)
+            model.updateDisplayAppList()
+    }
 
     override fun onDestroy() {
         appsAdapter.onDestroy()

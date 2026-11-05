@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Process
+import com.aistra.hail.utils.HPackages
 
 internal data class DiscoveredApp(
     val applicationInfo: ApplicationInfo,
@@ -13,7 +14,7 @@ internal data class DiscoveredApp(
     val installed: Boolean,
     val enabled: Boolean,
     val system: Boolean,
-    val hidden: Boolean,
+    val hidden: Boolean?,
     val suspended: Boolean,
     val stopped: Boolean
 )
@@ -23,8 +24,12 @@ internal class PackageDiscoveryRepository(context: Context) {
     private val currentUserId = Process.myUid() / PER_USER_RANGE
 
     fun queryCurrentUser(): List<DiscoveredApp> {
-        val flags = PackageManager.MATCH_UNINSTALLED_PACKAGES or
-            PackageManager.MATCH_DISABLED_COMPONENTS
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            PackageManager.MATCH_UNINSTALLED_PACKAGES or PackageManager.MATCH_DISABLED_COMPONENTS
+        } else {
+            @Suppress("DEPRECATION")
+            PackageManager.GET_UNINSTALLED_PACKAGES or PackageManager.GET_DISABLED_COMPONENTS
+        }
         val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             packageManager.getInstalledApplications(
                 PackageManager.ApplicationInfoFlags.of(flags.toLong())
@@ -35,13 +40,7 @@ internal class PackageDiscoveryRepository(context: Context) {
         }
         return applications.map { info ->
             val installed = info.flags and ApplicationInfo.FLAG_INSTALLED != 0
-            val hidden = runCatching {
-                val field = ApplicationInfo::class.java.getDeclaredField("privateFlags")
-                field.isAccessible = true
-                field.getInt(info) and PRIVATE_FLAG_HIDDEN != 0
-            }.getOrDefault(false)
-            val suspended = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                info.flags and ApplicationInfo.FLAG_SUSPENDED != 0
+            val state = HPackages.getFreezeState(info)
             DiscoveredApp(
                 applicationInfo = info,
                 packageName = info.packageName,
@@ -49,15 +48,14 @@ internal class PackageDiscoveryRepository(context: Context) {
                 installed = installed,
                 enabled = info.enabled,
                 system = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
-                hidden = hidden,
-                suspended = suspended,
-                stopped = info.flags and ApplicationInfo.FLAG_STOPPED != 0
+                hidden = state.hidden,
+                suspended = state.suspended,
+                stopped = state.stopped
             )
         }.sortedBy { it.packageName.lowercase() }
     }
 
     private companion object {
         const val PER_USER_RANGE = 100_000
-        const val PRIVATE_FLAG_HIDDEN = 1
     }
 }

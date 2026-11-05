@@ -1,6 +1,5 @@
 package com.aistra.hail.app
 
-import android.content.Intent
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.utils.*
 import kotlinx.coroutines.Dispatchers
@@ -18,16 +17,20 @@ object AppManager {
             }
         }
 
-    fun isAppFrozen(packageName: String): Boolean = with(HailData.workingMode) {
-        FreezeModePolicy.isFrozen(this, HPackages.isAppDisabled(packageName),
-            HPackages.isAppHidden(packageName), HPackages.isAppSuspended(packageName), HPackages.isAppStopped(packageName))
+    internal fun observeAppFrozen(packageName: String): Boolean? = with(HailData.workingMode) {
+        HPackages.getFreezeState(packageName)?.let { state ->
+            FreezeModePolicy.isFrozen(this, state.disabled, state.hidden, state.suspended, state.stopped)
+        }
     }
+
+    fun isAppFrozen(packageName: String): Boolean = observeAppFrozen(packageName) == true
 
     internal fun executeVerified(packageNames: Collection<String>, frozen: Boolean) =
         FreezeControllerFacade.execute(packageNames, frozen)
 
     fun setListFrozen(frozen: Boolean, vararg appInfo: AppInfo): String {
-        val eligible = appInfo.filter { it.packageName != BuildConfig.APPLICATION_ID }
+        val eligible = appInfo.filter { it.packageName != BuildConfig.APPLICATION_ID &&
+            it.userId == HPackages.myUserId }.distinctBy { it.packageName }
         if (eligible.isEmpty()) return "0"
         val results = executeVerified(eligible.map { it.packageName }, frozen)
         // The toast is a count of verified operations, not a permission diagnosis.
@@ -54,7 +57,6 @@ object AppManager {
             || (startsWith(HailData.SHIZUKU) && HShizuku.uninstallApp(packageName))
         )
             return true
-        HUI.startActivity(Intent.ACTION_DELETE, HPackages.packageUri(packageName))
         false
     }
 

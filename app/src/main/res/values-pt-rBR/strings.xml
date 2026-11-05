@@ -10,7 +10,7 @@
     <string name="action_unpin">Unpin</string>
     <string name="title_remove_owner">Remover proprietário do dispositivo</string>
     <string name="action_deselect">Desmarcar</string>
-    <string name="msg_unfreeze">Descongelar: %s</string>
+    <string name="msg_unfreeze">Descongelado: %s</string>
     <string name="action_remove_home">Remover da tela inicial</string>
     <string name="action_deferred_task">Tarefa adiada</string>
     <string name="action_unfreeze_tag">Tag de descongelamento</string>

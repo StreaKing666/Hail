@@ -8,6 +8,7 @@ import com.aistra.hail.R
 import com.aistra.hail.utils.HFiles
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 object HailData {
     const val URL_WHY_FREE_SOFTWARE = "https://www.gnu.org/philosophy/free-software-even-more-important.html"
@@ -199,75 +200,78 @@ object HailData {
     private val appsPath = "$dir/apps.json"
     private val tagsPath = "$dir/tags.json"
 
-    val checkedList: MutableList<AppInfo> by lazy {
-        mutableListOf<AppInfo>().apply {
-            runCatching {
-                val json = JSONArray(HFiles.read(appsPath))
-                for (i in 0 until json.length()) {
-                    add(with(json.getJSONObject(i)) {
-                        AppInfo(
-                            packageName = getString(KEY_PACKAGE),
-                            pinned = optBoolean(KEY_PINNED),
-                            whitelisted = optBoolean(KEY_WHITELISTED),
-                            tagIdList = optJSONArray(KEY_TAGS)?.let {
-                                MutableList(it.length()) { index -> it.getInt(index) }
-                            } ?: mutableListOf(optInt(KEY_TAG))
-                        )
-                    })
+    private val stateLock = Any()
+    @Volatile private var loadedApps: MutableList<AppInfo>? = null
+    @Volatile private var loadedTags: MutableList<Pair<String, Int>>? = null
+
+    val checkedList: MutableList<AppInfo>
+        get() = loadedApps ?: synchronized(stateLock) {
+            loadedApps ?: java.util.concurrent.CopyOnWriteArrayList(
+                readStoredState("apps.json") {
+                    LegacyStateReader.readApps(File(appsPath), com.aistra.hail.utils.HPackages.myUserId)
+                }.map {
+                    AppInfo(it.packageName, it.pinned, it.whitelisted, it.tagIds.toMutableList(), it.userId)
                 }
-            }
-        }.let { java.util.concurrent.CopyOnWriteArrayList(it) }
+            ).also { loadedApps = it }
+        }
+
+    /** Recovery can replace corrupt state without trying to parse it first. */
+    internal fun replaceTagState(nextTags: List<Pair<String, Int>>, nextApps: List<AppInfo>) = AppDataAccess.access {
+        synchronized(stateLock) {
+            loadedTags = java.util.concurrent.CopyOnWriteArrayList(nextTags)
+            loadedApps = java.util.concurrent.CopyOnWriteArrayList(nextApps)
+        }
     }
 
-    fun isChecked(packageName: String): Boolean = checkedList.any { it.packageName == packageName }
+    internal fun validateLoadedState(): Int = tags.size + checkedList.size
+
+    private fun <T> readStoredState(name: String, read: () -> T): T = try { read() }
+        catch (error: Exception) { throw StoredStateReadException(name, error) }
+
+    fun isChecked(packageName: String): Boolean = checkedList.any { it.packageName == packageName && it.userId == com.aistra.hail.utils.HPackages.myUserId }
 
     fun addCheckedApp(packageName: String, tagId: Int = 0, saveApps: Boolean = true) = AppDataAccess.access {
-        checkedList.add(AppInfo(packageName, tagIdList = mutableListOf(tagId)))
-        if (saveApps) saveApps()
+        val previous = checkedList.toList()
+        if (checkedList.none { it.packageName == packageName && it.userId == com.aistra.hail.utils.HPackages.myUserId }) {
+            checkedList.add(AppInfo(packageName, tagIdList = mutableListOf(tagId)))
+        }
+        if (saveApps) try { saveApps() } catch (error: Exception) {
+            checkedList.clear(); checkedList.addAll(previous)
+            throw error
+        }
     }
 
     fun removeCheckedApp(packageName: String, saveApps: Boolean = true) = AppDataAccess.access {
-        checkedList.removeAll { it.packageName == packageName }
-        if (saveApps) saveApps()
+        val previous = checkedList.toList()
+        checkedList.removeAll { it.packageName == packageName && it.userId == com.aistra.hail.utils.HPackages.myUserId }
+        if (saveApps) try { saveApps() } catch (error: Exception) {
+            checkedList.clear(); checkedList.addAll(previous)
+            throw error
+        }
     }
 
     fun saveApps() = AppDataAccess.access {
         if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
-        check(HFiles.write(appsPath, JSONArray().run {
-            checkedList.forEach {
-                put(
-                    JSONObject()
-                        .put(KEY_PACKAGE, it.packageName)
-                        .put(KEY_PINNED, it.pinned)
-                        .put(KEY_WHITELISTED, it.whitelisted)
-                        .put(KEY_TAGS, JSONArray(it.tagIdList))
-                )
-            }
-            toString()
-        })) { "Could not save apps.json" }
+        val encoded = LegacyStateReader.encodeApps(checkedList.map {
+            TagStateApp(it.packageName, it.pinned, it.whitelisted, it.userId, it.tagIdList)
+        })
+        check(HFiles.write(appsPath, encoded)) { "Could not save apps.json" }
     }
 
-    val tags: MutableList<Pair<String, Int>> by lazy {
-        mutableListOf<Pair<String, Int>>().apply {
-            runCatching {
-                val json = JSONArray(HFiles.read(tagsPath))
-                for (i in 0 until json.length()) {
-                    add(with(json.getJSONObject(i)) { getString(KEY_TAG) to getInt(KEY_ID) })
-                }
-            }.onFailure {
-                add(app.getString(R.string.label_default) to 0)
-            }
-        }.let { java.util.concurrent.CopyOnWriteArrayList(it) }
-    }
+    val tags: MutableList<Pair<String, Int>>
+        get() = loadedTags ?: synchronized(stateLock) {
+            loadedTags ?: java.util.concurrent.CopyOnWriteArrayList(
+                readStoredState("tags.json") {
+                    LegacyStateReader.readTags(File(tagsPath), app.getString(R.string.label_default))
+                }.map { it.name to it.id }
+            ).also { loadedTags = it }
+        }
 
     fun saveTags() = AppDataAccess.access {
         if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
-        check(HFiles.write(tagsPath, JSONArray().run {
-            tags.forEach {
-                put(JSONObject().put(KEY_TAG, it.first).put(KEY_ID, it.second))
-            }
-            toString()
-        })) { "Could not save tags.json" }
+        check(HFiles.write(tagsPath, LegacyStateReader.encodeTags(tags.map { TagStateTag(it.first, it.second) }))) {
+            "Could not save tags.json"
+        }
     }
 
     internal fun createTagBackup(): TagBackup = TagBackup(

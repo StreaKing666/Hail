@@ -7,15 +7,20 @@ import android.widget.CompoundButton
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.aistra.hail.app.AppManager
+import com.aistra.hail.app.observeFrozenState
+import com.aistra.hail.app.FreezePresentationPolicy
 import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.ItemAppsBinding
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Job
+import java.util.concurrent.ConcurrentHashMap
 
-class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
+class AppsAdapter private constructor(
+    private val presentedStates: MutableMap<String, FreezePresentationPolicy.State>
+) : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(ObservationDiff(presentedStates)) {
+    constructor() : this(ConcurrentHashMap())
 
     companion object {
         val DIFF = object : DiffUtil.ItemCallback<ApplicationInfo>() {
@@ -28,14 +33,21 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
                     oldItem.enabled == newItem.enabled &&
                     oldItem.uid == newItem.uid &&
                     oldItem.sourceDir == newItem.sourceDir &&
-                    privateFlags(oldItem) == privateFlags(newItem)
-
-            private fun privateFlags(info: ApplicationInfo): Int = runCatching {
-                ApplicationInfo::class.java.getDeclaredField("privateFlags").apply {
-                    isAccessible = true
-                }.getInt(info)
-            }.getOrDefault(0)
+                    HPackages.privateFlagsOrNull(oldItem) == HPackages.privateFlagsOrNull(newItem)
         }
+    }
+
+    // A mode change can alter verification without changing ApplicationInfo's public flags.
+    private class ObservationDiff(
+        private val presentedStates: Map<String, FreezePresentationPolicy.State>
+    ) : DiffUtil.ItemCallback<ApplicationInfo>() {
+        override fun areItemsTheSame(oldItem: ApplicationInfo, newItem: ApplicationInfo): Boolean =
+            DIFF.areItemsTheSame(oldItem, newItem)
+
+        override fun areContentsTheSame(oldItem: ApplicationInfo, newItem: ApplicationInfo): Boolean =
+            DIFF.areContentsTheSame(oldItem, newItem) &&
+                presentedStates[oldItem.packageName] == FreezePresentationPolicy.classify(
+                    newItem.uid / 100_000 == HPackages.myUserId, true, newItem.observeFrozenState())
     }
 
     lateinit var onItemClickListener: OnItemClickListener
@@ -77,7 +89,11 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
         fun bindInfo(info: ApplicationInfo) {
             updating = true
             this.info = info
-            val frozen = AppManager.isAppFrozen(pkg)
+            val observed = info.observeFrozenState()
+            val state = FreezePresentationPolicy.classify(
+                info.uid / 100_000 == HPackages.myUserId, true, observed)
+            presentedStates[pkg] = state
+            val frozen = state == FreezePresentationPolicy.State.FROZEN
 
             binding.appIcon.apply {
                 val baseSize = resources.getDimensionPixelSize(com.aistra.hail.R.dimen.app_icon_size)
@@ -94,7 +110,7 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
                 val name = info.loadLabel(context.packageManager)
                 text = if (!HailData.grayscaleIcon && frozen) "❄️$name" else name
                 isEnabled = !HailData.grayscaleIcon || !frozen
-                if (HPackages.isAppUninstalled(pkg)) setTextColor(
+                if (info.flags and ApplicationInfo.FLAG_INSTALLED == 0) setTextColor(
                     MaterialColors.getColor(
                         this, androidx.appcompat.R.attr.colorError
                     )
@@ -105,10 +121,13 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
                 val statuses = buildList {
                     if (info.flags and ApplicationInfo.FLAG_INSTALLED == 0) add(context.getString(com.aistra.hail.R.string.state_uninstalled))
                     if (!info.enabled) add(context.getString(com.aistra.hail.R.string.state_disabled))
-                    if (runCatching { HPackages.isAppHidden(pkg) }.getOrDefault(false)) add(context.getString(com.aistra.hail.R.string.state_hidden))
-                    if (runCatching { HPackages.isAppSuspended(pkg) }.getOrDefault(false)) add(context.getString(com.aistra.hail.R.string.state_suspended))
+                    if (HPackages.isAppHidden(info) == true) add(context.getString(com.aistra.hail.R.string.state_hidden))
+                    if (HPackages.isAppSuspended(info)) add(context.getString(com.aistra.hail.R.string.state_suspended))
                 }
-                text = (listOf(pkg) + statuses).joinToString(" · ")
+                val verification = if (observed == null)
+                    listOf(context.getString(com.aistra.hail.R.string.state_unverified)) else emptyList()
+                // Put the diagnostic first so compact rows cannot ellipsize it behind the package name.
+                text = (verification + pkg + statuses).joinToString(" · ")
                 maxLines = if (HailData.compactAppList) 1 else 2
                 isEnabled = !HailData.grayscaleIcon || !frozen
             }

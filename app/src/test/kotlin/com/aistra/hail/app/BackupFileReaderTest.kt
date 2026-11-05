@@ -17,6 +17,15 @@ class BackupFileReaderTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun privateRecoveryCapturesMissingStateWithoutCreatingFiles() {
+        val root = Files.createTempDirectory("hail-empty-recovery").toFile()
+        try {
+            assertTrue(BackupFileReader.read(root, requireStateFiles = false).isEmpty())
+            assertTrue(root.listFiles()!!.isEmpty())
+            assertThrows(IllegalArgumentException::class.java) { BackupFileReader.read(root) }
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun ignoresExcludedOversizedFilesBeforeReadingOrValidatingThem() = withRoot { root ->
         RandomAccessFile(File(root, "unused.bin"), "rw").use { it.setLength(9L * 1024 * 1024) }
         val files = BackupFileReader.read(root, FullBackupSelection(includeAdditionalFiles = false))

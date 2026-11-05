@@ -181,16 +181,16 @@
 <string name="tag_backup_import">Import tag configuration</string>
 <string name="tag_backup_export_success">Tag backup saved successfully</string>
 <string name="tag_backup_import_title">Import tag configuration?</string>
-<string name="tag_backup_import_summary">The backup contains %1$d tags and %2$d app assignments. The tag list and assignments for matching apps will be replaced. Other app entries will be kept and moved to Default if their old tags no longer exist. Existing pin and whitelist flags are preserved for apps already in Enhanced; new app entries restore these flags from the backup. Freeze states and working mode are not changed.</string>
+<string name="tag_backup_import_summary">Backup contents — tags: %1$d; app assignments: %2$d. The tag list and assignments for matching apps will be replaced. Other app entries will be kept and moved to Default if their old tags no longer exist. Existing pin and whitelist flags are preserved for apps already in Enhanced; new app entries restore these flags from the backup. Freeze states and working mode are not changed.</string>
 <string name="tag_backup_import_confirm">Import</string>
-<string name="tag_backup_import_success">Imported %1$d tags and %2$d app assignments</string>
+<string name="tag_backup_import_success">Imported tags: %1$d; app assignments: %2$d</string>
 <string name="tag_backup_error">Backup operation failed: %1$s</string>
 <string name="action_backup_menu">Backup and restore</string>
 <string name="full_backup_export">Export full app backup</string>
 <string name="full_backup_import">Restore full app backup</string>
 <string name="full_backup_export_success">Full app backup saved successfully</string>
 <string name="full_backup_import_title">Restore Hail app backup?</string>
-<string name="full_backup_import_summary">The archive contains %1$d tags, %2$d tracked apps, %3$d app files and %4$d restorable preferences (schema v%5$d). Tracked apps, tags and matching preferences will be replaced with the saved values; archived app files will be merged. Working mode, biometric login and auto-freeze activation are reset. Android permissions, Shizuku/Dhizuku grants, device-owner status, shortcuts pinned by the launcher, queued delayed freeze/unfreeze jobs and actual freeze states are not included. Reconfigure permissions and working mode after restore. Files not present in the archive are kept. The ZIP is not encrypted; store it privately.</string>
+<string name="full_backup_import_summary">Archive contents — tags: %1$d; tracked apps: %2$d; app files: %3$d; restorable preferences: %4$d (schema v%5$d). Tracked apps, tags and matching preferences will be replaced with the saved values; archived app files will be merged. Working mode, biometric login and auto-freeze activation are reset. Android permissions, Shizuku/Dhizuku grants, device-owner status, shortcuts pinned by the launcher, queued delayed freeze/unfreeze jobs and actual freeze states are not included. Reconfigure permissions and working mode after restore. Files not present in the archive are kept. The ZIP is not encrypted; store it privately.</string>
 <string name="full_backup_import_confirm">Restore backup</string>
 <string name="full_backup_import_success">Full backup restored. Reconfigure working mode and required permissions.</string>
 <string name="tag_manage_apps">Manage category apps</string>
@@ -208,7 +208,7 @@
 <string name="tag_apps_move_success">Moved to category: %1$d</string>
 
     <string name="tag_editor_v2_hint">Tap a category to manage its apps. Drag the handle to change the order; use the menu for more actions.</string>
-    <string name="tag_editor_v2_summary">%1$d categories · %2$d apps</string>
+    <string name="tag_editor_v2_summary">Categories: %1$d · apps: %2$d</string>
     <string name="tag_editor_v2_pending">Unsaved changes</string>
     <string name="tag_editor_v2_staged">Changes are saved only when you tap Save in the category editor.</string>
     <string name="tag_editor_v2_fixed">Pinned first</string>
@@ -234,7 +234,7 @@
     <string name="profile_applied">Profile applied: %1$s</string>
     <string name="profile_apply">Apply profile</string>
     <string name="profile_apply_anyway">Apply despite conflicts</string>
-    <string name="profile_conflicts">This profile has %1$d conflicting package assignments across saved profiles. Applying will use the selected profile state for those packages. Continue?</string>
+    <string name="profile_conflicts">Conflicting package assignments across saved profiles: %1$d. Applying will use the selected profile state for those packages. Continue?</string>
     <string name="profile_shortcut">Add dynamic shortcut</string>
     <string name="profile_pin_shortcut">Pin to home screen</string>
     <string name="profile_delete">Delete profile</string>

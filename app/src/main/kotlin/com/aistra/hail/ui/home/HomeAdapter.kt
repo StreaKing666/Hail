@@ -5,12 +5,17 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.aistra.hail.app.HailData.tags
 
 class HomeAdapter(fragment: HomeFragment) : FragmentStateAdapter(fragment) {
-    override fun getItemCount(): Int = tags.size
+    // Adapter data changes only when the UI publishes the next snapshot and notifies it.
+    private var visibleTags = tags.toList()
+    fun refreshTags() { visibleTags = tags.toList() }
+    fun tagAt(position: Int) = visibleTags.getOrNull(position)
 
-    override fun getItemId(position: Int): Long = TagOrder.stableItemId(tags[position].second)
+    override fun getItemCount(): Int = visibleTags.size
+
+    override fun getItemId(position: Int): Long = TagOrder.stableItemId(visibleTags[position].second)
 
     override fun containsItem(itemId: Long): Boolean =
-        tags.any { TagOrder.stableItemId(it.second) == itemId }
+        visibleTags.any { TagOrder.stableItemId(it.second) == itemId }
 
     override fun createFragment(position: Int): Fragment = PagerFragment()
 }

@@ -31,6 +31,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.R
+import com.aistra.hail.app.AppDataAccess
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailApi
@@ -125,6 +126,12 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         }
     }
 
+    private fun mutateData(block: () -> Unit) {
+        AppDataAccess.tryAccess(block).onFailure {
+            HUI.showToast(R.string.operation_failed, HUI.operationError(it), true)
+        }
+    }
+
     private fun updateCurrentList() = HailData.checkedList.filter {
         if (query.isEmpty()) tag?.second?.let { tagId -> tagId in it.tagIdList } ?: false
         else ((HailData.nineKeySearch && NineKeySearch.search(
@@ -183,6 +190,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 ) || frozen)
             }.toTypedArray()
         ) { _, which ->
+            mutateData {
             when (which) {
                 0 -> launchApp(pkg)
                 1 -> setListFrozen(!frozen, listOf(info))
@@ -242,6 +250,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     if (!AppManager.isAppFrozen(pkg)) removeCheckedApp(pkg)
                 }
             }
+
+            }
         }.setNeutralButton(R.string.action_details) { _, _ ->
             HUI.startActivity(
                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS, HPackages.packageUri(pkg)
@@ -259,6 +269,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         ) { _, index, isChecked ->
             checkedItems[index] = isChecked
         }.setPositiveButton(android.R.string.ok) { _, _ ->
+            mutateData {
             info.tagIdList.clear()
             checkedItems.forEachIndexed { index, checked ->
                 if (checked) info.tagIdList.add(HailData.tags[index].second)
@@ -268,6 +279,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
             HailData.saveApps()
             updateCurrentList()
+
+            }
         }.setNeutralButton(R.string.action_tag_add) { _, _ ->
             showTagDialog(listOf(info))
         }.setNegativeButton(android.R.string.cancel, null).show()
@@ -295,6 +308,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 R.string.action_unfreeze_remove_home
             ).map { getString(it) }.toTypedArray()
         ) { _, which ->
+            mutateData {
             when (which) {
                 0 -> {
                     setListFrozen(true, selectedList, false)
@@ -328,6 +342,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     deselect()
                 }
             }
+
+            }
         }.setNegativeButton(R.string.action_deselect) { _, _ ->
             deselect()
         }.setNeutralButton(R.string.action_select_all) { _, _ ->
@@ -352,6 +368,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent { AppTheme { TriStateTagList(initialStates, states) } }
         }).setPositiveButton(android.R.string.ok) { _, _ ->
+            mutateData {
             selectedList.forEach {
                 states.forEachIndexed { index, state ->
                     val tagId = HailData.tags[index].second
@@ -368,6 +385,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
             HailData.saveApps()
             deselect()
+
+            }
         }.setNeutralButton(R.string.action_tag_add) { _, _ ->
             showTagDialog(selectedList)
         }.setNegativeButton(android.R.string.cancel, null).show()
@@ -403,7 +422,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         }
     }
 
-    private fun launchApp(packageName: String) {
+    private fun launchApp(packageName: String) = mutateData {
         if (AppManager.isAppFrozen(packageName) && AppManager.setAppFrozen(packageName, false)) {
             updateCurrentList()
         }
@@ -418,17 +437,17 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
 
     private fun setListFrozen(
         frozen: Boolean, list: List<AppInfo> = HailData.checkedList, updateList: Boolean = true
-    ) {
+    ) = mutateData {
         if (HailData.workingMode == HailData.MODE_DEFAULT) {
             MaterialAlertDialogBuilder(activity).setMessage(R.string.msg_guide)
                 .setPositiveButton(android.R.string.ok, null).show()
-            return
+            return@mutateData
         } else if (HailData.workingMode == HailData.MODE_SHIZUKU_HIDE) {
             runCatching { HShizuku.isRoot }.onSuccess {
                 if (!it) {
                     MaterialAlertDialogBuilder(activity).setMessage(R.string.shizuku_hide_adb)
                         .setPositiveButton(android.R.string.ok, null).show()
-                    return
+                    return@mutateData
                 }
             }
         }
@@ -457,11 +476,13 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         list ?: binding.editText.setText(tag?.first ?: "")
         MaterialAlertDialogBuilder(activity).setTitle(if (list != null) R.string.action_tag_add else R.string.action_tag_set)
             .setView(binding.root).setPositiveButton(android.R.string.ok) { _, _ ->
+            mutateData {
                 val tagName = binding.editText.text.toString()
                 val tagId = tagName.hashCode()
-                if (HailData.tags.any { it.first == tagName || it.second == tagId }) return@setPositiveButton
+                if (HailData.tags.any { it.first == tagName || it.second == tagId }) return@mutateData
                 if (list != null) { // Add tag
                     HailData.tags.add(tagName to tagId)
+                    homeAdapter.refreshTags()
                     homeAdapter.notifyItemInserted(homeAdapter.itemCount - 1)
                     if (query.isEmpty() && tabLayout.tabCount == 2) tabLayout.isVisible = true
                     if (list == selectedList) triStateTagDialog() else tagDialog(list.first())
@@ -477,10 +498,13 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                         }
                         HailData.saveApps()
                     }
+                    homeAdapter.refreshTags()
                     homeAdapter.notifyItemChanged(position)
                 }
                 HailData.saveTags()
-            }.apply {
+
+            }
+        }.apply {
                 val position = tabLayout.selectedTabPosition
                 if (list != null || position == 0) return@apply
                 setNeutralButton(R.string.action_tag_remove) { _, _ ->
@@ -491,6 +515,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                         }
                     }
                     HailData.tags.removeAt(position)
+                    homeAdapter.refreshTags()
                     homeAdapter.notifyItemRemoved(position)
                     if (tabLayout.tabCount == 1) tabLayout.isVisible = false
                     HailData.saveApps()
@@ -511,6 +536,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     }
 
     private fun importFromClipboard() = runCatching {
+        AppDataAccess.access {
         val str = HUI.pasteText() ?: throw IllegalArgumentException()
         val json = if (str.contains('[')) JSONArray(
             str.substring(
@@ -531,15 +557,24 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             updateCurrentList()
         }
         HUI.showToast(getString(R.string.msg_imported, i.toString()))
+
+        }
+}
+
+    private suspend fun importFrozenApp(): Int {
+        val tagId = tag?.second ?: 0
+        return withContext(Dispatchers.IO) {
+            AppDataAccess.access {
+                val packages = HPackages.getInstalledApplications().map { it.packageName }
+                    .filter { AppManager.isAppFrozen(it) && !HailData.isChecked(it) }
+                packages.forEach { HailData.addCheckedApp(it, tagId, false) }
+                if (packages.isNotEmpty()) HailData.saveApps()
+                packages.size
+            }
+        }
     }
 
-    private suspend fun importFrozenApp() = withContext(Dispatchers.IO) {
-        HPackages.getInstalledApplications().map { it.packageName }
-            .filter { AppManager.isAppFrozen(it) && !HailData.isChecked(it) }
-            .onEach { HailData.addCheckedApp(it, tag?.second ?: 0, false) }.size
-    }
-
-    private fun removeCheckedApp(packageName: String, saveApps: Boolean = true) {
+    private fun removeCheckedApp(packageName: String, saveApps: Boolean = true) = mutateData {
         HailData.removeCheckedApp(packageName, saveApps)
         if (saveApps) updateCurrentList()
     }
@@ -551,23 +586,23 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         )
     )
 
-    override fun onMenuItemSelected(item: MenuItem): Boolean {
+    override fun onMenuItemSelected(item: MenuItem): Boolean = AppDataAccess.tryAccess {
         when (item.itemId) {
             R.id.action_export_full_backup -> {
                 (parentFragment as? HomeFragment)?.launchFullBackupExport()
-                return true
+                return@tryAccess true
             }
             R.id.action_import_full_backup -> {
                 (parentFragment as? HomeFragment)?.launchFullBackupImport()
-                return true
+                return@tryAccess true
             }
             R.id.action_export_tag_backup -> {
                 (parentFragment as? HomeFragment)?.launchTagBackupExport()
-                return true
+                return@tryAccess true
             }
             R.id.action_import_tag_backup -> {
                 (parentFragment as? HomeFragment)?.launchTagBackupImport()
-                return true
+                return@tryAccess true
             }
             R.id.action_multiselect -> {
                 multiselect = !multiselect
@@ -588,17 +623,17 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             R.id.action_import_clipboard -> importFromClipboard()
             R.id.action_import_frozen -> lifecycleScope.launch {
                 val size = importFrozenApp()
-                if (size > 0) {
-                    HailData.saveApps()
-                    updateCurrentList()
-                }
+                if (size > 0) updateCurrentList()
                 HUI.showToast(getString(R.string.msg_imported, size.toString()))
             }
 
             R.id.action_export_current -> exportToClipboard(pagerAdapter.currentList)
             R.id.action_export_all -> exportToClipboard(HailData.checkedList)
         }
-        return false
+        false
+    } .getOrElse {
+        HUI.showToast(R.string.operation_failed, HUI.operationError(it), true)
+        false
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {

@@ -15,7 +15,7 @@ internal data class ProcessExecution(
 /** Drains even discarded output. A child cannot fill its pipe while we wait for exit. */
 internal object BoundedProcessRunner {
     fun run(program: List<String>, command: String, timeoutMillis: Long = 30_000,
-            maxOutputBytes: Int = 256 * 1024): ProcessExecution {
+            maxOutputBytes: Int = 256 * 1024, startProcess: (() -> Process)? = null): ProcessExecution {
         require(program.isNotEmpty() && timeoutMillis > 0 && maxOutputBytes in 1..1024 * 1024)
         require(command.toByteArray(Charsets.UTF_8).size <= 1024 * 1024) { "Command is too large" }
         if (Thread.currentThread().isInterrupted) return ProcessExecution(130, "Cancelled", cancelled = true)
@@ -25,16 +25,17 @@ internal object BoundedProcessRunner {
         var process: Process? = null
         var reader: Thread? = null
         var writer: Thread? = null
+        var errorReader: Thread? = null
         var timedOut = false
         var cancelled = false
         var exit = 1
         try {
-            val child = ProcessBuilder(program).redirectErrorStream(true).start()
+            val child = startProcess?.invoke() ?: ProcessBuilder(program).redirectErrorStream(true).start()
             process = child
             val deadline = System.nanoTime() + timeoutMillis * 1_000_000
-            reader = Thread({
+            fun drain(inputStream: java.io.InputStream, name: String) = Thread({
                 try {
-                    child.inputStream.use { input ->
+                    inputStream.use { input ->
                         val buffer = ByteArray(8192)
                         while (true) {
                             val count = input.read(buffer)
@@ -47,7 +48,9 @@ internal object BoundedProcessRunner {
                         }
                     }
                 } catch (_: IOException) { ioFailed.set(true) }
-            }, "hail-shell-output").apply { isDaemon = true; start() }
+            }, name).apply { isDaemon = true; start() }
+            reader = drain(child.inputStream, "hail-shell-output")
+            errorReader = drain(child.errorStream, "hail-shell-error")
             writer = Thread({
                 try { child.outputStream.use { it.write((command + "\n").toByteArray(Charsets.UTF_8)) } }
                 catch (_: IOException) { ioFailed.set(true) }
@@ -55,7 +58,7 @@ internal object BoundedProcessRunner {
 
             while (true) {
                 val code = try { child.exitValue() } catch (_: IllegalThreadStateException) { null }
-                if (code != null && !reader.isAlive && !writer.isAlive) {
+                if (code != null && !reader.isAlive && !errorReader.isAlive && !writer.isAlive) {
                     exit = if (code == 0 && ioFailed.get()) 1 else code
                     break
                 }
@@ -73,14 +76,14 @@ internal object BoundedProcessRunner {
             // Clear interrupt just for bounded cleanup, then restore the caller's cancellation.
             if (Thread.interrupted()) cancelled = true
             process?.let { child ->
-                child.destroy()
+                runCatching { child.destroy() }
                 // Available on JVM/Android O+. Reflection preserves the Android 6 floor.
                 runCatching { Process::class.java.getMethod("destroyForcibly").invoke(child) }
                 runCatching { child.outputStream.close() }
                 runCatching { child.inputStream.close() }
                 runCatching { child.errorStream.close() }
             }
-            try { reader?.join(200); writer?.join(200) }
+            try { reader?.join(200); errorReader?.join(200); writer?.join(200) }
             catch (_: InterruptedException) { cancelled = true }
             if (cancelled) Thread.currentThread().interrupt()
         }

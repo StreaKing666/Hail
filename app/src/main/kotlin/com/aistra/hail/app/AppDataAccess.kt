@@ -12,6 +12,7 @@ internal object AppDataAccess {
     private val mutableStatus = MutableStateFlow(RecoveryStatus.CHECKING)
     val status = mutableStatus.asStateFlow()
     fun <T> access(block: () -> T): T = coordinator.access(block)
+    fun <T> tryAccess(block: () -> T): Result<T> = coordinator.tryAccess(block)
     fun requireRecovery() {
         coordinator.requireRecovery()
         mutableStatus.value = RecoveryStatus.FAILED

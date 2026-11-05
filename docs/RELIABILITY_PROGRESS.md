@@ -23,3 +23,18 @@ suppress missing-translation checks. English/Russian new copy is implemented; ot
 remain explicit translation debt. Cost: non-English/Russian users see fallback text.
 Ruling: no automatic signature bypass or cross-authority thaw. A mode lacking a required
 thaw permission fails visibly; cost: user must select an appropriate authorized mode.
+
+Final review (fresh reviewer, 533c632): no Critical issues; three Important findings.
+Fixed bounded Shizuku path using shared process runner with separate stderr drain;
+fixed Shizuku (and root ordinary uninstall) to explicit process user; fixed main-thread
+contention through complete guarded UI mutations and asynchronous latest-wins service policy.
+Review fixes RED: review-fixes-red.log. GREEN: 105 pure tests; Android suite passed.
+Also publish immutable HomeAdapter tag snapshots on main and use safe snapshot iterators
+for background restore. No privileged commands are replayed automatically on recovery.
+Ruling: descendant survival was not reproduced by reviewer probes; no process-tree kill
+feature is introduced. Cost: device-specific descendants need real-device validation.
+Ruling: all device-specific lifecycle/permissions/installation checks are NOT_RUN; unit
+and compile results are not a substitute. Artifact checks will run after signing.
+Ruling: preserve other Android users when uninstalling; root/Shizuku now always use the
+current Hail process user. Cost: uninstall no longer implicitly removes all users' copies.
+Final review: minor (deferred): none from the reviewer.

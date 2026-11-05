@@ -102,7 +102,7 @@ class HomeFragment : MainFragment() {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         binding.pager.adapter = HomeAdapter(this)
         TabLayoutMediator(binding.tabs, binding.pager) { tab, position ->
-            tab.text = tags[position].first
+            tab.text = (binding.pager.adapter as HomeAdapter).tagAt(position)?.first ?: getString(R.string.label_default)
         }.attach()
         binding.tabs.post { bindTagLongPress() }
         binding.tabs.applyDefaultInsetter { paddingRelative(isRtl, start = !activity.isLandscape, end = true) }
@@ -113,6 +113,7 @@ class HomeFragment : MainFragment() {
 
     fun refreshTags(preferredTagId: Int?) {
         val pagerAdapter = binding.pager.adapter as? HomeAdapter ?: return
+        pagerAdapter.refreshTags()
         pagerAdapter.notifyDataSetChanged()
         // Keep even the Default tab visible: long-press is the single tag-editor entry point.
         binding.tabs.isVisible = true
@@ -388,7 +389,9 @@ class HomeFragment : MainFragment() {
     private fun bindTagLongPress() {
         for (position in 0 until binding.tabs.tabCount) {
             binding.tabs.getTabAt(position)?.view?.setOnLongClickListener {
-                if (isResumed) TagEditorDialog(this).show()
+                if (isResumed) AppDataAccess.tryAccess { TagEditorDialog(this).show() }.onFailure {
+                    Toast.makeText(app, getString(R.string.operation_failed, com.aistra.hail.utils.HUI.operationError(it)), Toast.LENGTH_LONG).show()
+                }
                 true
             }
         }

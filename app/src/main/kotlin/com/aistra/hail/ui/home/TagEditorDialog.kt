@@ -277,7 +277,7 @@ class TagEditorDialog(private val home: HomeFragment) {
         try {
             com.aistra.hail.app.AppDataAccess.access { saveChanges() }
         } catch (error: Exception) {
-            com.aistra.hail.utils.HUI.showToast(com.aistra.hail.R.string.operation_failed, error.message ?: "Unknown", true)
+            com.aistra.hail.utils.HUI.showToast(com.aistra.hail.R.string.operation_failed, com.aistra.hail.utils.HUI.operationError(error), true)
         }
     }
 
@@ -406,9 +406,11 @@ class TagEditorDialog(private val home: HomeFragment) {
         }
     }
 
-    private fun textAction(symbol: String, description: String) = object : TextView(context) {
+    private class AccessibleActionTextView(context: Context) : androidx.appcompat.widget.AppCompatTextView(context) {
         override fun performClick(): Boolean = super.performClick()
-    }.apply {
+    }
+
+    private fun textAction(symbol: String, description: String) = AccessibleActionTextView(context).apply {
         text = symbol
         textSize = 20f
         gravity = Gravity.CENTER
@@ -422,7 +424,7 @@ class TagEditorDialog(private val home: HomeFragment) {
 
     private class TagHolder(
         item: View,
-        val handle: TextView,
+        val handle: AccessibleActionTextView,
         val title: TextView,
         val subtitle: TextView,
         val more: TextView

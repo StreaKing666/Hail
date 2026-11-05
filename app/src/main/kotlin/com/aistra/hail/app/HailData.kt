@@ -216,7 +216,7 @@ object HailData {
                     })
                 }
             }
-        }
+        }.let { java.util.concurrent.CopyOnWriteArrayList(it) }
     }
 
     fun isChecked(packageName: String): Boolean = checkedList.any { it.packageName == packageName }
@@ -257,7 +257,7 @@ object HailData {
             }.onFailure {
                 add(app.getString(R.string.label_default) to 0)
             }
-        }
+        }.let { java.util.concurrent.CopyOnWriteArrayList(it) }
     }
 
     fun saveTags() = AppDataAccess.access {
@@ -289,16 +289,14 @@ object HailData {
             tags.clear()
             tags.addAll(plan.tags.map { it.name to it.id })
             checkedList.clear()
-            plan.apps.forEach {
-                checkedList.add(
+            checkedList.addAll(plan.apps.map {
                     AppInfo(
                         packageName = it.packageName,
                         pinned = it.pinned,
                         whitelisted = it.whitelisted,
                         tagIdList = it.tagIds.toMutableList()
                     )
-                )
-            }
+            })
 
             saveTags()
             saveApps()
@@ -336,16 +334,14 @@ object HailData {
             tags.clear()
             tags.addAll(valid.tags.map { it.name to it.id })
             checkedList.clear()
-            valid.apps.forEach {
-                checkedList.add(
+            checkedList.addAll(valid.apps.map {
                     AppInfo(
                         packageName = it.packageName,
                         pinned = it.pinned,
                         whitelisted = it.whitelisted,
                         tagIdList = it.tagIds.toMutableList()
                     )
-                )
-            }
+            })
             saveTags()
             saveApps()
         } catch (error: Exception) {

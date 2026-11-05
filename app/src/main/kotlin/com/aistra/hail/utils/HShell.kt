@@ -38,11 +38,11 @@ object HShell {
     fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
         execSU("pm ${if (suspended) "suspend" else "unsuspend"} $userArg $packageName").first == 0
 
-    fun uninstallApp(packageName: String) = execSU(
-        "pm ${if (HPackages.canUninstallNormally(packageName)) "uninstall" else "uninstall $userArg"} $packageName"
-    ).first == 0
+    fun uninstallApp(packageName: String): Boolean =
+        execSU(UserScopedCommands.uninstall(packageName, getCurrentUserId())).first == 0
 
-    fun reinstallApp(packageName: String) = execSU("pm install-existing $userArg $packageName").first == 0
+    fun reinstallApp(packageName: String): Boolean =
+        execSU(UserScopedCommands.reinstall(packageName, getCurrentUserId())).first == 0
 
     @RequiresApi(Build.VERSION_CODES.P)
     fun setAppRestricted(packageName: String, restricted: Boolean) = execSU(

@@ -1,4 +1,5 @@
 <resources>
+    <string name="data_operation_busy">Выполняется другая операция. Дождитесь её завершения и повторите попытку.</string>
     <string name="editor_app_row">%1$s\n%2$s</string>
     <string name="recovery_checking">Проверка прерванных операций…</string>
     <string name="recovery_failed_title">Не удалось завершить восстановление</string>
@@ -16,7 +17,7 @@
     <string name="state_failed">Ошибка</string>
     <string name="state_pending">Ожидает проверки</string>
     <string name="state_unverified">Не подтверждено</string>
-    <string name="rule_service_failed">Правила сохранены, но фоновый обработчик не запустился. Откройте Hail и проверьте ограничения фоновой работы.</string>
+    <string name="rule_service_failed">Не удалось запустить фоновый обработчик. Откройте Hail и проверьте ограничения фоновой работы.</string>
     <string name="profile_frozen_state">Заморозить: %1$s</string>
     <string name="action_exit">Выйти</string>
 </resources>

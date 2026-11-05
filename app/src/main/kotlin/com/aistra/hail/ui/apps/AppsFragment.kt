@@ -244,8 +244,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     override fun onItemCheckedChange(
         buttonView: CompoundButton, isChecked: Boolean, packageName: String
     ) {
-        if (isChecked) HailData.addCheckedApp(packageName)
-        else HailData.removeCheckedApp(packageName)
+        com.aistra.hail.app.AppDataAccess.tryAccess {
+            if (isChecked) HailData.addCheckedApp(packageName)
+            else HailData.removeCheckedApp(packageName)
+        }.onFailure { HUI.showToast(R.string.operation_failed, HUI.operationError(it), true) }
         buttonView.isChecked = HailData.isChecked(packageName)
     }
 

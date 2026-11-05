@@ -4,7 +4,7 @@ import android.content.Intent
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.utils.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
 
 object AppManager {
     val lockScreen: Boolean
@@ -70,7 +70,7 @@ object AppManager {
         }
     }
 
-    suspend fun execute(command: String): Pair<Int, String?> = withContext(Dispatchers.IO) {
+    suspend fun execute(command: String): Pair<Int, String?> = runInterruptible(Dispatchers.IO) {
         with(HailData.workingMode) {
             when {
                 startsWith(HailData.SU) || startsWith(HailData.JAILBREAK) -> HShell.execute(command, true)

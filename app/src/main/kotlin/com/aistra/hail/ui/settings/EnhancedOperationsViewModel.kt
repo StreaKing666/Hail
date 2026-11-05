@@ -39,7 +39,7 @@ internal class EnhancedOperationsViewModel : ViewModel() {
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 android.util.Log.e("HailOperation", "Operation failed: " + error.javaClass.simpleName)
-                mutableState.value = EnhancedOperation(id, error = error.message ?: error.javaClass.simpleName)
+                mutableState.value = EnhancedOperation(id, error = com.aistra.hail.utils.HUI.operationError(error))
             }
         }
     }

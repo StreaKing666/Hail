@@ -39,4 +39,10 @@ object HUI {
         ?.setPrimaryClip(ClipData.newPlainText(app.getString(R.string.app_name), text))
 
     fun pasteText(): String? = app.getSystemService<ClipboardManager>()?.primaryClip?.getItemAt(0)?.text?.toString()
+
+    internal fun operationError(error: Throwable): String = when (error) {
+        is com.aistra.hail.app.DataBusyException -> app.getString(R.string.data_operation_busy)
+        is com.aistra.hail.app.RecoveryBlockedException -> app.getString(R.string.recovery_failed_message)
+        else -> error.message ?: error.javaClass.simpleName
+    }
 }

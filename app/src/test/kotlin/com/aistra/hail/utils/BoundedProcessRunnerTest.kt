@@ -5,6 +5,14 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicReference
 
 class BoundedProcessRunnerTest {
+    @Test fun remoteProcessFactoryDrainsSeparateStderrAndStdout() {
+        val result = BoundedProcessRunner.run(listOf("sh"),
+            "head -c 1000000 /dev/zero >&2; head -c 1000000 /dev/zero; exit 3", 5_000, 2048,
+            startProcess = { ProcessBuilder("sh").start() })
+        assertEquals(3, result.exitCode)
+        assertTrue(result.truncated)
+        assertTrue(result.output.toByteArray().size <= 2048)
+    }
     @Test fun drainsLargeOutputBeforeWaitingAndBoundsCapturedBytes() {
         val result = BoundedProcessRunner.run(listOf("sh"),
             "head -c 2000000 /dev/zero; printf done", 5_000, 4096)

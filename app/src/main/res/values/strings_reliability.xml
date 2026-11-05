@@ -1,4 +1,5 @@
 <resources>
+    <string name="data_operation_busy">Another operation is in progress. Wait for it to finish and try again.</string>
     <string name="editor_app_row">%1$s\n%2$s</string>
     <string name="recovery_checking">Checking interrupted operations…</string>
     <string name="recovery_failed_title">Data recovery needs attention</string>
@@ -16,7 +17,7 @@
     <string name="state_failed">Failed</string>
     <string name="state_pending">Pending</string>
     <string name="state_unverified">Not verified</string>
-    <string name="rule_service_failed">Rules were saved, but the background listener could not start. Open Hail and check background restrictions.</string>
+    <string name="rule_service_failed">The background listener could not start. Open Hail and check background restrictions.</string>
     <string name="profile_frozen_state">Frozen: %1$s</string>
     <string name="action_exit">Exit</string>
 </resources>

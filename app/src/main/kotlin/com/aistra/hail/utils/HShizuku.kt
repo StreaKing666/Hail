@@ -208,21 +208,34 @@ object HShizuku {
     }
 
     fun uninstallApp(packageName: String): Boolean =
-        execute("pm ${if (HPackages.canUninstallNormally(packageName)) "uninstall" else "uninstall --user current"} $packageName").first == 0
+        execute(UserScopedCommands.uninstall(packageName, HPackages.myUserId)).first == 0
 
     fun reinstallApp(packageName: String): Boolean =
-        execute("pm install-existing --user current $packageName").first == 0
+        execute(UserScopedCommands.reinstall(packageName, HPackages.myUserId)).first == 0
 
     fun execute(command: String, root: Boolean = isRoot): Pair<Int, String?> = runCatching {
-        IShizukuService.Stub.asInterface(Shizuku.getBinder()).newProcess(arrayOf(if (root) "su" else "sh"), null, null)
-            .run {
-                ParcelFileDescriptor.AutoCloseOutputStream(outputStream).use {
-                    it.write(command.toByteArray())
+        val result = BoundedProcessRunner.run(listOf(if (root) "su" else "sh"), command,
+            startProcess = {
+                val remote = IShizukuService.Stub.asInterface(Shizuku.getBinder())
+                    .newProcess(arrayOf(if (root) "su" else "sh"), null, null)
+                object : Process() {
+                    private val input = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
+                    private val errors = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
+                    private val output = ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
+                    override fun getInputStream(): java.io.InputStream = input
+                    override fun getErrorStream(): java.io.InputStream = errors
+                    override fun getOutputStream(): java.io.OutputStream = output
+                    override fun waitFor(): Int = remote.waitFor()
+                    override fun exitValue(): Int = remote.exitValue()
+                    override fun destroy() { remote.destroy() }
                 }
-                waitFor() to inputStream.text.ifBlank { errorStream.text }.also { destroy() }
-            }
-    }.getOrElse { 1 to it.stackTraceToString() }
-
-    private val ParcelFileDescriptor.text
-        get() = ParcelFileDescriptor.AutoCloseInputStream(this).bufferedReader().use { it.readText() }
+            })
+        val status = when {
+            result.cancelled -> "\nCancelled"
+            result.timedOut -> "\nCommand timed out; verify the actual package state before retrying"
+            result.truncated -> "\n[Output truncated]"
+            else -> ""
+        }
+        result.exitCode to result.output + status
+    }.getOrElse { 1 to (it.message ?: it.javaClass.simpleName) }
 }

@@ -22,6 +22,7 @@ import com.aistra.hail.utils.HDhizuku
 import com.aistra.hail.utils.HTarget
 
 class HailApp : Application() {
+    private val serviceRevision = java.util.concurrent.atomic.AtomicLong()
     private val recoveryRunning = AtomicBoolean(false)
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     override fun onCreate() {
@@ -50,19 +51,39 @@ class HailApp : Application() {
     }
 
     fun setAutoFreezeService(autoFreezeAfterLock: Boolean = HailData.autoFreezeAfterLock, context: Context = app) {
-        val eligible = HailData.checkedList.any {
-            it.packageName != packageName && it.applicationInfo != null && !AppManager.isAppFrozen(it.packageName) && !it.whitelisted
-        }
-        val rules = FreezeRuleStore(this)
-        val start = RuleServicePolicy.needsScreenReceiver(autoFreezeAfterLock, eligible,
-            rules.isEnabled, if (rules.isEnabled) rules.getRules() else emptyList())
-        val intent = Intent(app, AutoFreezeService::class.java)
-        if (start) {
-            setAutoFreezeServiceEnabled(true)
-            ContextCompat.startForegroundService(context, intent)
-        } else {
-            stopService(intent)
-            setAutoFreezeServiceEnabled(false)
+        val revision = serviceRevision.incrementAndGet()
+        val applicationContext = context.applicationContext
+        applicationScope.launch {
+            try {
+                val start = AppDataAccess.access {
+                    val eligible = HailData.checkedList.any {
+                        it.packageName != packageName && it.applicationInfo != null &&
+                            !AppManager.isAppFrozen(it.packageName) && !it.whitelisted
+                    }
+                    val rules = FreezeRuleStore(this@HailApp)
+                    RuleServicePolicy.needsScreenReceiver(autoFreezeAfterLock, eligible,
+                        rules.isEnabled, if (rules.isEnabled) rules.getRules() else emptyList())
+                }
+                withContext(Dispatchers.Main) {
+                    if (revision != serviceRevision.get()) return@withContext
+                    val intent = Intent(app, AutoFreezeService::class.java)
+                    runCatching {
+                        if (start) {
+                            setAutoFreezeServiceEnabled(true)
+                            ContextCompat.startForegroundService(applicationContext, intent)
+                        } else {
+                            stopService(intent)
+                            setAutoFreezeServiceEnabled(false)
+                        }
+                    }.onFailure {
+                        android.util.Log.e("HailService", "Listener update failed: " + it.javaClass.simpleName)
+                        com.aistra.hail.utils.HUI.showToast(com.aistra.hail.R.string.rule_service_failed)
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                android.util.Log.e("HailService", "Listener policy unavailable: " + error.javaClass.simpleName)
+            }
         }
     }
 

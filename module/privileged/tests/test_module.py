@@ -104,8 +104,10 @@ class TestBundledUpstreamAPK(unittest.TestCase):
                 self.assertIn('LICENSE', z.namelist())
                 self.assertIn('TESTED_DEVICES.md', z.namelist())
                 module_prop = dict(line.split('=', 1) for line in z.read('module.prop').decode('utf8').splitlines() if '=' in line)
-                self.assertEqual(module_prop['version'], '1.0.0-hail1.11.0-enhanced.11-g18ff92c')
-                self.assertEqual(int(module_prop['versionCode']), 111011)
+                with zipfile.ZipFile(self.apk) as apk:
+                    expected = read_manifest(apk)
+                self.assertEqual(module_prop['version'], '1.0.0-hail' + str(expected['versionName']))
+                self.assertEqual(int(module_prop['versionCode']), int(expected['versionCode']))
                 self.assertIn(b'Hail Enhanced Privileged 1.0.0', z.read('customize.sh'))
 
 

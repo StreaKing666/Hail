@@ -44,3 +44,5 @@ startup recovery could leave FragmentManager without restored NavHost containers
 Always create the real containers, keep content invisible until recovery/authentication,
 and recreate once after reconciliation. RecoveryUiPolicy RED -> GREEN covers normal,
 pending-startup and retry transitions. Real Android lifecycle acceptance remains NOT_RUN.
+
+Final: 108 Gradle JVM + 4 migration + 14 wrapper tests PASS. Both signed APKs and exact module verified. Full lint FAIL solely 278 MissingTranslation (69 warnings); no suppression. Device acceptance NOT_RUN. Module test version assertion updated to input manifest instead of old .11 constant.

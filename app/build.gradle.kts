@@ -45,8 +45,8 @@ android {
         applicationId = if (originalPackage) "com.aistra.hail" else "com.aistra.hail.enhanced"
         minSdk = 23
         targetSdk = 36
-        versionCode = 111012
-        versionName = "1.11.0-enhanced.12" + if (originalPackage) "-original-package" else ""
+        versionCode = 111013
+        versionName = "1.11.0-enhanced.13" + if (originalPackage) "-original-package" else ""
     }
 
     buildTypes {

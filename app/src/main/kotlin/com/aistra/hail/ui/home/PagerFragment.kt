@@ -452,15 +452,9 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
         }
         val filtered = list.filter { AppManager.isAppFrozen(it.packageName) != frozen }
-        when (val result = AppManager.setListFrozen(frozen, *filtered.toTypedArray())) {
-            null -> HUI.showToast(R.string.permission_denied)
-            else -> {
-                if (updateList) updateCurrentList()
-                HUI.showToast(
-                    if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, result
-                )
-            }
-        }
+        val result = AppManager.setListFrozen(frozen, *filtered.toTypedArray())
+        if (updateList) updateCurrentList()
+        HUI.showToast(if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, result)
     }
 
     fun refreshAfterTagConfigChanged() {

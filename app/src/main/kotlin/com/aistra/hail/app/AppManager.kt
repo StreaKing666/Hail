@@ -26,17 +26,13 @@ object AppManager {
     internal fun executeVerified(packageNames: Collection<String>, frozen: Boolean) =
         FreezeControllerFacade.execute(packageNames, frozen)
 
-    fun setListFrozen(frozen: Boolean, vararg appInfo: AppInfo): String? {
+    fun setListFrozen(frozen: Boolean, vararg appInfo: AppInfo): String {
         val eligible = appInfo.filter { it.packageName != BuildConfig.APPLICATION_ID }
         if (eligible.isEmpty()) return "0"
         val results = executeVerified(eligible.map { it.packageName }, frozen)
-        val successful = results.count {
-            it.outcome == com.aistra.hail.enhanced.domain.FreezeOutcome.SUCCESS && it.stateVerified
-        }
-        if (successful == 0) return null
-        if (successful == 1 && eligible.size == 1) return eligible.single().name.toString()
-        return if (successful < eligible.size) successful.toString() + "/" + eligible.size
-        else successful.toString()
+        // The toast is a count of verified operations, not a permission diagnosis.
+        // Failed/unverifiable operations retain their detailed journal entries.
+        return com.aistra.hail.enhanced.domain.FreezeOperationReport.summarize(results).verified.toString()
     }
 
     internal fun recoverPendingFreezeOperations() {

@@ -1,6 +1,7 @@
 #!/system/bin/sh
 # Android module manager sources customize.sh. Do not use exit or set -e.
 ui_print '***************************************'
+ui_print '- Target: __PACKAGE__'
 ui_print ' Hail Enhanced Privileged 1.0.0 '
 ui_print ' Magisk / KernelSU / ReSukiSU '
 ui_print '***************************************'
@@ -15,8 +16,8 @@ case "$_HAIL_API" in
 esac
 [ "$_HAIL_API" -ge __MIN_SDK__ ] || abort '! Requires Android API __MIN_SDK__ or newer.'
 
-_HAIL_APK="$MODPATH/system/priv-app/HailEnhanced/HailEnhanced.apk"
-_HAIL_XML="$MODPATH/system/etc/permissions/privapp-permissions-com.aistra.hail.enhanced.xml"
+_HAIL_APK="$MODPATH/system/priv-app/__APP_DIR__/__APP_DIR__.apk"
+_HAIL_XML="$MODPATH/system/etc/permissions/privapp-permissions-__PACKAGE__.xml"
 [ -s "$_HAIL_APK" ] || abort '! Hail APK missing from ZIP.'
 [ -s "$_HAIL_XML" ] || abort '! Privileged permission XML missing from ZIP.'
 command -v sha256sum >/dev/null 2>&1 || abort '! sha256sum is needed to check APK integrity.'
@@ -24,11 +25,11 @@ _HAIL_SUM="$(sha256sum "$_HAIL_APK" 2>/dev/null)" || abort '! Cannot compute APK
 _HAIL_SUM="${_HAIL_SUM%% *}"
 [ "$_HAIL_SUM" = '__APK_SHA256__' ] || abort '! Hail APK checksum mismatch. Installation stopped.'
 
-# Allow the original Hail module; reject another Enhanced injector.
+# Check both active and pending modules for this package. Same-ID updates are allowed.
 [ -r "$MODPATH/lib/install_checks.sh" ] || abort '! Conflict checker missing.'
 . "$MODPATH/lib/install_checks.sh"
-hail_check_module_tree /data/adb/modules || abort '! Disable conflicting Enhanced module first.'
-hail_check_module_tree /data/adb/modules_update || abort '! Remove pending conflicting Enhanced module first.'
+hail_check_module_tree /data/adb/modules '__PACKAGE__' '__MODULE_ID__' '__APP_DIR__' || abort '! Disable conflicting Hail module first.'
+hail_check_module_tree /data/adb/modules_update '__PACKAGE__' '__MODULE_ID__' '__APP_DIR__' || abort '! Remove pending conflicting Hail module first.'
 _HAIL_XML_SUM="$(sha256sum "$_HAIL_XML" 2>/dev/null)" || abort '! Cannot hash permissions XML.'
 _HAIL_XML_SUM="${_HAIL_XML_SUM%% *}"
 [ "$_HAIL_XML_SUM" = '__XML_SHA256__' ] || abort '! Permissions XML checksum mismatch.'
@@ -36,12 +37,13 @@ _HAIL_XML_SUM="${_HAIL_XML_SUM%% *}"
 # Android PackageManager may reject user-installed updates signed by a different
 # distributor. Never uninstall an existing app or change /data automatically.
 if command -v pm >/dev/null 2>&1; then
-  _HAIL_INSTALLED="$(pm path com.aistra.hail.enhanced 2>/dev/null)"
+  _HAIL_INSTALLED="$(pm path __PACKAGE__ 2>/dev/null)"
   case "$_HAIL_INSTALLED" in
     *'/data/app/'*)
       ui_print '! Hail is already installed under /data/app.'
       ui_print '! Ensure its signer matches the Enhanced release APK supplied in this ZIP.'
       ui_print '! Different signatures may prevent package registration.'
+      ui_print '! A /data/app update may remain active instead of the module APK.'
       ;;
   esac
 fi
@@ -58,6 +60,7 @@ else
   ui_print '- Magisk-compatible systemless mounting required.'
 fi
 ui_print '- No boot service, SELinux policy changes or data removal.'
-ui_print '- Existing data and original Hail are not changed by this installer.'
+ui_print '- Existing app data is not changed by this installer.'
+ui_print '- This module does not bypass Android signature checks.'
 ui_print '- Reboot, then run module Action to verify PackageManager state.'
 unset _HAIL_API _HAIL_APK _HAIL_XML _HAIL_SUM _HAIL_INSTALLED _HAIL_XML_SUM

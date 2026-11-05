@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import struct
 import sys
 import zipfile
@@ -94,7 +95,13 @@ def add_zip_bytes(z: zipfile.ZipFile, name: str, data: bytes, executable=False):
     z.writestr(zi, data, compresslevel=9)
 
 
-def build(apk_path: Path, output: Path):
+def build(apk_path: Path, output: Path, variant: str = 'clone'):
+    if variant not in ('clone', 'original'):
+        raise ValueError('Unknown module variant')
+    original = variant == 'original'
+    package = 'com.aistra.hail' if original else EXPECTED_PACKAGE
+    module_id = 'Hail-System-PrivApp' if original else 'Hail-Enhanced-PrivApp'
+    app_dir = 'Hail' if original else 'HailEnhanced'
     apk_bytes = apk_path.read_bytes()
     apk_hash = hashlib.sha256(apk_bytes).hexdigest()
     with zipfile.ZipFile(apk_path) as apk:
@@ -102,20 +109,30 @@ def build(apk_path: Path, output: Path):
             raise ValueError('APK ZIP CRC check failed')
         manifest = read_manifest(apk)
         print('Manifest:', manifest)
-        if manifest['package'] != EXPECTED_PACKAGE:
-            raise ValueError('Not a com.aistra.hail.enhanced APK')
+        if manifest['package'] != package:
+            raise ValueError(f'Expected {package} APK for {variant} module')
         if int(manifest['minSdkVersion']) < 23:
             raise ValueError('Unexpected minimum Android version: inspect manually')
     # Verify cryptographic APK v2 signature AND the signed entire content.
     # This fails closed on tampering, even if a stale META-INF cert remains.
     cert = verify_apk_v2(apk_path)
+    if original:
+        audit_bytes = (ROOT / 'original-audit.json').read_bytes()
+        audit = json.loads(audit_bytes)
+        if audit.get('apk_sha256') != apk_hash:
+            raise ValueError('Audited APK mismatch: run a new audit before packaging another APK')
+        if (audit.get('package') != package or audit.get('version_code') != manifest['versionCode']
+                or audit.get('version_name') != manifest['versionName'] or audit.get('signer_sha256') != cert):
+            raise ValueError('Audited APK identity mismatch')
 
     ver = str(manifest['versionName'])
     code = int(manifest['versionCode'])
     if code <= 0:
         raise ValueError('Invalid APK versionCode')
     module_version = f'1.0.0-hail{ver}'
-    module_code = code  # separate Enhanced module identity
+    module_code = code
+    permissions = (ROOT / 'privapp-permissions-com.aistra.hail.enhanced.xml').read_bytes().replace(
+        EXPECTED_PACKAGE.encode(), package.encode())
 
     def template(name: str) -> bytes:
         s = (ROOT / name).read_text(encoding='utf-8')
@@ -123,15 +140,18 @@ def build(apk_path: Path, output: Path):
               .replace('__MODULE_VERSION__', module_version)
               .replace('__MODULE_CODE__', str(module_code))
               .replace('__APK_SHA256__', apk_hash)
-              .replace('__XML_SHA256__', hashlib.sha256((ROOT / 'privapp-permissions-com.aistra.hail.enhanced.xml').read_bytes()).hexdigest())
+              .replace('__XML_SHA256__', hashlib.sha256(permissions).hexdigest())
+              .replace('__PACKAGE__', package)
+              .replace('__APP_DIR__', app_dir)
+              .replace('__MODULE_ID__', module_id)
+              .replace('__TARGET_LABEL__', 'original replacement' if original else 'clone')
               .replace('__MIN_SDK__', str(manifest['minSdkVersion'])))
-        if any(token in s for token in ('__MODULE_', '__HAIL_', '__APK_', '__XML_', '__MIN_SDK__')):
+        if any(token in s for token in ('__MODULE_', '__HAIL_', '__APK_', '__XML_', '__MIN_SDK__', '__PACKAGE__', '__APP_DIR__', '__TARGET_LABEL__')):
             raise ValueError('Unsubstituted template tokens')
         return s.encode('utf-8')
 
-    permissions = (ROOT / 'privapp-permissions-com.aistra.hail.enhanced.xml').read_bytes()
     root = ET.fromstring(permissions)
-    app = root.find(".//privapp-permissions[@package='com.aistra.hail.enhanced']")
+    app = root.find(f".//privapp-permissions[@package='{package}']")
     expected = {
         'android.permission.PACKAGE_USAGE_STATS',
         'android.permission.FORCE_STOP_PACKAGES',
@@ -144,21 +164,26 @@ def build(apk_path: Path, output: Path):
     files = {
         'module.prop': (template('module.prop.in'), False),
         'customize.sh': (template('customize.sh.in'), True),
-        'action.sh': ((ROOT / 'action.sh').read_bytes(), True),
+        'action.sh': (template('action.sh.in'), True),
         'lib/install_checks.sh': ((ROOT / 'lib/install_checks.sh').read_bytes(), False),
-        'system/priv-app/HailEnhanced/HailEnhanced.apk': (apk_bytes, False),
-        'system/etc/permissions/privapp-permissions-com.aistra.hail.enhanced.xml': (permissions, False),
-        'README_RU.md': ((ROOT / 'README_RU.md').read_bytes(), False),
-        'README_EN.md': ((ROOT / 'README_EN.md').read_bytes(), False),
+        f'system/priv-app/{app_dir}/{app_dir}.apk': (apk_bytes, False),
+        f'system/etc/permissions/privapp-permissions-{package}.xml': (permissions, False),
+        'README_RU.md': ((ROOT / ('README_ORIGINAL_RU.md' if original else 'README_RU.md')).read_bytes(), False),
+        'README_EN.md': ((ROOT / ('README_ORIGINAL_EN.md' if original else 'README_EN.md')).read_bytes(), False),
         'CHANGELOG.md': ((ROOT / 'CHANGELOG.md').read_bytes(), False),
         'LICENSE': ((ROOT / 'LICENSE').read_bytes(), False),
-        'NOTICE': ((ROOT / 'NOTICE').read_bytes(), False),
+        'NOTICE': (template('NOTICE.in'), False),
         'APP_AUDIT.md': ((ROOT / 'APP_AUDIT.md').read_bytes(), False),
         'TESTED_DEVICES.md': ((ROOT / 'TESTED_DEVICES.md').read_bytes(), False),
         'RELEASE_NOTES_RU.md': ((ROOT / 'RELEASE_NOTES_RU.md').read_bytes(), False),
         'RELEASE_NOTES_EN.md': ((ROOT / 'RELEASE_NOTES_EN.md').read_bytes(), False),
         'APK_SHA256.txt': (f'{apk_hash}  Hail.apk\nSigner SHA256: {cert}\n'.encode(), False),
     }
+    if original:
+        for name in ('CHANGELOG.md', 'APP_AUDIT.md', 'TESTED_DEVICES.md', 'RELEASE_NOTES_RU.md', 'RELEASE_NOTES_EN.md'):
+            files.pop(name)
+        files['APP_AUDIT.md'] = ((ROOT.parent.parent / 'docs/APK_REAUDIT_ORIGINAL_2026-11-05.md').read_bytes(), False)
+        files['AUDIT_METADATA.json'] = (audit_bytes, False)
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, 'w') as z:
         for name, (data, exe) in files.items():
@@ -166,10 +191,10 @@ def build(apk_path: Path, output: Path):
 
     with zipfile.ZipFile(output) as z:
         assert z.testzip() is None
-        assert hashlib.sha256(z.read('system/priv-app/HailEnhanced/HailEnhanced.apk')).hexdigest() == apk_hash
-        assert z.read('module.prop').splitlines()[0] == b'id=Hail-Enhanced-PrivApp'
+        assert hashlib.sha256(z.read(f'system/priv-app/{app_dir}/{app_dir}.apk')).hexdigest() == apk_hash
+        assert z.read('module.prop').splitlines()[0] == f'id={module_id}'.encode()
         assert z.read('customize.sh').count(apk_hash.encode()) == 1
-        assert z.read('system/priv-app/HailEnhanced/HailEnhanced.apk') == apk_bytes
+        assert z.read(f'system/priv-app/{app_dir}/{app_dir}.apk') == apk_bytes
     print('APK SHA256:', apk_hash)
     print('Signer SHA256:', cert)
     print('Created:', output, f'({output.stat().st_size:,} bytes)')
@@ -179,8 +204,9 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--apk', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--variant', choices=('clone', 'original'), default='clone')
     args = p.parse_args()
     try:
-        build(args.apk, args.output)
+        build(args.apk, args.output, args.variant)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as e:
         sys.exit(f'ERROR: {e}')

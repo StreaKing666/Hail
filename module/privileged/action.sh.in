@@ -1,13 +1,15 @@
 #!/system/bin/sh
 # Read-only diagnostics. Never grant permissions or modify device state.
 MODDIR="${0%/*}"
-PKG=com.aistra.hail.enhanced
-APP=/system/priv-app/HailEnhanced/HailEnhanced.apk
-XML=/system/etc/permissions/privapp-permissions-com.aistra.hail.enhanced.xml
+PKG=__PACKAGE__
+APP=/system/priv-app/__APP_DIR__/__APP_DIR__.apk
+XML=/system/etc/permissions/privapp-permissions-__PACKAGE__.xml
 
 echo '=== Hail Enhanced: READ-ONLY diagnostic ==='
 echo "Android: $(getprop ro.build.version.release 2>/dev/null) (SDK $(getprop ro.build.version.sdk 2>/dev/null))"
 echo "Module ID: ${MODDIR##*/}"
+echo "Expected package: $PKG"
+echo 'Expected version: __HAIL_VERSION__'
 for MARKER in disable remove skip_mount; do
   if [ -f "$MODDIR/$MARKER" ]; then echo "Module flag: $MARKER"; fi
 done
@@ -16,7 +18,20 @@ if [ -r "$XML" ]; then echo 'Permissions XML: VISIBLE'; else echo 'Permissions X
 
 if command -v pm >/dev/null 2>&1; then
   echo 'Package path(s):'
-  pm path "$PKG" 2>&1 || true
+  ACTIVE_PATHS="$(pm path "$PKG" 2>/dev/null)"
+  printf '%s\n' "$ACTIVE_PATHS"
+  ACTIVE_APK="$(printf '%s\n' "$ACTIVE_PATHS" | sed -n 's/^package://p' | head -n 1)"
+  if [ -r "$ACTIVE_APK" ] && command -v sha256sum >/dev/null 2>&1; then
+    ACTIVE_SUM="$(sha256sum "$ACTIVE_APK" 2>/dev/null)"
+    ACTIVE_SUM="${ACTIVE_SUM%% *}"
+    if [ "$ACTIVE_SUM" = '__APK_SHA256__' ]; then
+      echo 'Active APK matches module: YES'
+    else
+      echo 'Active APK matches module: NO (different code is active)'
+    fi
+  else
+    echo 'Active APK matches module: NOT_VERIFIED'
+  fi
   if pm list packages -s "$PKG" 2>/dev/null | grep -Fx "package:$PKG" >/dev/null 2>&1; then
     echo 'PackageManager system classification: YES'
   else

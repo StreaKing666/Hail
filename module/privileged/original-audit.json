@@ -1,0 +1,15 @@
+{
+  "package": "com.aistra.hail",
+  "apk_sha256": "aaaba7389c2a95e32fe3742ad6a8c0d133de05656bb23c612daf663b2e659376",
+  "version_code": 111013,
+  "version_name": "1.11.0-enhanced.13-original-package-gd5714a1",
+  "app_source_commit": "d5714a14a59b32dd6616e28ad559bfaba761a1fd",
+  "signer_sha256": "ae3ca1228d75917a561aa98efa4b5959af77095e1d089d26673b5567afa648cb",
+  "jvm_tests": 108,
+  "jvm_failures": 0,
+  "lint_status": "FAIL",
+  "lint_errors": 278,
+  "lint_error_ids": ["MissingTranslation"],
+  "lint_warnings": 69,
+  "device_status": "NOT_RUN"
+}

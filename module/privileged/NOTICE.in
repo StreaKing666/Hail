@@ -1,0 +1,16 @@
+Hail Enhanced Privileged — unofficial module
+Original module wrapper: +SWAG+, Hail Universal Privileged 2.1.0.
+Original Hail: copyright aistra0528 and contributors.
+Upstream: https://github.com/aistra0528/Hail
+Enhanced sources: https://github.com/StreaKing666/Hail
+Bundled package: __PACKAGE__
+Bundled version: __HAIL_VERSION__
+Bundled APK SHA-256: __APK_SHA256__
+Not endorsed by upstream Hail. The APK is embedded unchanged and uses
+the Enhanced release certificate, NOT the upstream signing key.
+No signature verification bypass is included.
+Wrapper: variant identities, paths, permission XML; Enhanced signer pinning;
+APK/XML integrity, duplicate-module checks and read-only active APK diagnostics.
+GPL-3.0 applies; preserve LICENSE and attribution.
+Corresponding application source history and wrapper sources accompany this
+distribution. Signing secrets are not included. Device testing is not implied.

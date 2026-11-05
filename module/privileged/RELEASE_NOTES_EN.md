@@ -1,3 +1,4 @@
-# Module 1.0.0 / Enhanced .11
-Experimental priv-app packaging; APK unchanged. Device validation pending.
-Separate module, not an update of original Hail Universal. See README_EN.md.
+# Enhanced .12
+Embeds the signed Enhanced .12 clone unchanged. Install in the root manager, reboot,
+inspect Action and test a noncritical app. Does not replace original Hail or bypass
+signature checks. Real-device acceptance remains NOT_RUN; see README_EN.md.

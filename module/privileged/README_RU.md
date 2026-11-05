@@ -37,5 +37,5 @@
 ## Сборка и исходники
 python3 tools/build.py --apk /path/to/signed-enhanced11.apk --output /path/to/module.zip
 Нужны Python 3 и cryptography из requirements.txt.
-Сопровождающий Hail-Enhanced-enhanced11-module-source.zip содержит wrapper и application — исходники обёртки и точной версии приложения. Подписывающие ключи и пароли не включаются.
+Сопровождающий Hail-Enhanced-enhanced12-source-and-history.zip содержит application/module/privileged и исходники приложения — исходники обёртки и точной версии приложения. Подписывающие ключи и пароли не включаются.
 Лицензия GPL-3.0; Hail © aistra0528 и участники, исходная обёртка +SWAG+.
